@@ -69,7 +69,7 @@ class SnippetContext(host.Host):
         out=self.run_context([('20 snippet-context {doc} {version} 1 3 2 5',b'')],actions=['key ctrl+End'])
         nums,parts=self.context()
         self.assertEqual(nums,[1,3,4,1,0])
-        self.assertEqual(parts,['😀hello\nnext'.encode(),'  😀hello'.encode(),str(self.proj/'a.txt').encode(),str(self.proj).encode(),b'  ',b''])
+        self.assertEqual(parts,['😀hello\nnext'.encode(),'  😀hello'.encode(),(self.proj/'a.txt').as_posix().encode(),self.proj.as_posix().encode(),b'  ',b''])
         states=[x for x in out if x.startswith('tabs=')]
         self.assertEqual(states[0],states[1]);self.assertIn('nextline',out)
 
@@ -110,7 +110,7 @@ class SnippetContext(host.Host):
         self.assertTrue(any(x.startswith('error 21 nodoc ') for x in lines),lines)
 
     def test_bad_positions_and_utf8_split(self):
-        (self.proj/'a.txt').write_text('😀\n')
+        (self.proj/'a.txt').write_text('😀\n', encoding='utf-8')
         self.run_context([('20 snippet-context {doc} {version} 1 2 1 2',b''),
             ('21 snippet-context {doc} {version} 2 1 1 1',b''),
             ('23 snippet-context {doc} {version} 99 1 99 1',b'')])

@@ -299,7 +299,12 @@ FN main
     mov qword ptr [rsp + 88], 0
     API CreateWindowExW
     test rax, rax
-    jz wm_fail
+    jnz 1f
+    API GetLastError            # why the window could not be made: exit 65536 + the error
+    lea ecx, [rax + 65536]
+    mov edi, ecx
+    call sys_exit
+1:
     mov [rip + wm_window], rax
     mov [rip + win_hwnd], rax
     lea rax, [rip + win_clip_get]

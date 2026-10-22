@@ -319,7 +319,9 @@ if ($DiscardUpdate) {
 
 if ($ApplyUpdate) {
     $receipt = Get-Content -LiteralPath (Join-Path $UpdateStage 'update.json') -Raw | ConvertFrom-Json
-    if ($receipt.target -ine $InstallDir -or $receipt.version -cne $Version) { throw 'Invalid staged update.' }
+    # the receipt's folder normalized as $InstallDir was (GetFullPath expands an 8.3 short name)
+    $receiptTarget = if ($receipt.target) { [IO.Path]::GetFullPath([string]$receipt.target).TrimEnd('\', '/') } else { '' }
+    if ($receiptTarget -ine $InstallDir -or $receipt.version -cne $Version) { throw 'Invalid staged update.' }
     $files = @('rhun.exe', 'rhun.com', 'LICENSE', 'install.ps1')
     $noticePresent = Test-Path -LiteralPath (Join-Path $UpdateStage 'LICENSE-Unicode.txt') -PathType Leaf
     $noticeRecorded = $receipt.hashes.PSObject.Properties.Name -contains 'LICENSE-Unicode.txt'

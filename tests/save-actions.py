@@ -34,6 +34,8 @@ class SaveActions(host.Host):
             (folder/'main.py').write_text('MODE='+json.dumps(mode)+'\nDELAY='+repr(delay)+'\nOWNER='+json.dumps(owner)+'\n'+r'''
 import os, sys, time
 from pathlib import Path
+# bodies are counted in bytes: no CRLF translation or code page on Windows
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 log=open(Path(os.environ['RHUN_STATE'])/'source.log','a',buffering=1)
 print('hello 1 save-actions format' if MODE!='unnegotiated' else 'hello 1 format',flush=True)
 pending=None

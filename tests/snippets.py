@@ -306,7 +306,7 @@ class Snippets(host.Host):
         self.assertIn('x x',out)
 
     def test_explicit_rejects_split_unicode_range(self):
-        (self.proj/'a.txt').write_text('é')
+        (self.proj/'a.txt').write_text('é', encoding='utf-8')
         out=self.run_snippet(['print-doc','print-state'],span='1 2 1 3')
         self.assertTrue(any(x.startswith('error 20 badpos') for x in self.trace()),self.trace())
         self.assertIn('é',out)

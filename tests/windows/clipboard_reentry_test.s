@@ -39,7 +39,12 @@ make_window:
     lea rcx, [rsp + 96]
     API RegisterClassExW
     test ax, ax
-    jz 9f
+    jnz 2f
+    API GetLastError            # why the class could not be registered: exit 131072 + the error
+    lea ecx, [rax + 131072]
+    mov edi, ecx
+    SYS SYS_exit
+2:
     xor ecx, ecx
     mov rdx, r12
     mov r8, r12
@@ -54,6 +59,12 @@ make_window:
     mov [rsp + 80], rax
     mov qword ptr [rsp + 88], 0
     API CreateWindowExW
+    test rax, rax
+    jnz 9f
+    API GetLastError            # why the window could not be made: exit 65536 + the error
+    lea ecx, [rax + 65536]
+    mov edi, ecx
+    SYS SYS_exit
 9:  EPILOGUE
 
 # Claim ownership with delayed text rendering. EmptyClipboard must notify this window next time.
@@ -425,15 +436,18 @@ FN main
     lea rcx, [rip + saved_keyboard]
     API GetKeyboardState
     test eax, eax
+    mov r15d, 1001   # which check of stage 10
     jz failed
     lea rcx, [rip + keyboard]
     API SetKeyboardState
     test eax, eax
+    mov r15d, 1002   # which check of stage 10
     jz failed
     lea rdi, [rip + win_wndproc]
     lea rsi, [rip + target_class]
     call make_window
     test rax, rax
+    mov r15d, 1003   # which check of stage 10
     jz failed
     mov [rip + target], rax
     mov [rip + win_hwnd], rax
@@ -441,6 +455,7 @@ FN main
     lea rsi, [rip + owner_class]
     call make_window
     test rax, rax
+    mov r15d, 1004   # which check of stage 10
     jz failed
     mov [rip + owner], rax
     call keys_init
@@ -476,6 +491,7 @@ FN main
     mov rdi, [rip + fixture_sn]
     call snippet_validate
     cmp eax, 1
+    mov r15d, 1005   # which check of stage 10
     jne failed
     mov rdi, [rip + fixture_doc]
     mov rsi, [rip + fixture_sn]

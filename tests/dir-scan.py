@@ -86,7 +86,9 @@ def checks(fixture, folder):
     empty, small, large = [folder / name for name in ('empty', 'small', 'large')]
     for path in (empty, small, large):
         path.mkdir()
-    for name in ('alpha', '.hidden', '.pending', '...', 'é 水 😀', "spaces & '$ `"):
+    # Windows refuses a name that ends with a dot ('...')
+    names = ('alpha', '.hidden', '.pending', '...', 'é 水 😀', "spaces & '$ `")
+    for name in names if sys.platform != 'win32' else [n for n in names if not n.endswith('.')]:
         (small / name).write_bytes(b'')
     nested = small / 'nested'
     nested.mkdir()

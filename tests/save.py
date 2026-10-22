@@ -41,6 +41,8 @@ class Saves(host.Host):
             program = r'''
 import sys, time, os
 from pathlib import Path
+# bodies are counted in bytes: no CRLF translation or code page on Windows
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 log = open(Path(os.environ['RHUN_STATE'])/'requests.log','a',buffering=1)
 print('hello 1 format',flush=True)
 for raw in sys.stdin.buffer:

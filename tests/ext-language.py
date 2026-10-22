@@ -63,7 +63,7 @@ class Languages(host.Host):
         self.run_editor(['cmd echo.toast','wait-ext echo running','wait 100',
             'key ctrl+Home',*(['key shift+Right']*5),*self.choose('Python'),'wait 300'],exts=root)
         log=self.echo_log()
-        opened='0 opened 1 0 Python '+str(self.proj/'a.txt')
+        opened='0 opened 1 0 Python '+(self.proj/'a.txt').as_posix()
         at=log.index(opened)
         self.assertIn('0 closed 1',log[:at])
         tail=log[at+1:]

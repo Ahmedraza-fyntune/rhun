@@ -380,7 +380,12 @@ FN main
     mov qword ptr [rsp + 88], 0
     API CreateWindowExW
     test rax, rax
-    jz wm_fail
+    jnz 1f
+    API GetLastError            # why the window could not be made: exit 65536 + the error
+    lea ecx, [rax + 65536]
+    mov edi, ecx
+    call sys_exit
+1:
     mov [rip + wm_window], rax
     mov [rip + win_hwnd], rax
     lea rax, [rip + win_clip_get]
@@ -398,20 +403,24 @@ FN main
     mov edx, 2
     call doc_selections_set
     cmp eax, 1
+    mov qword ptr [rip + wm_stage], 202   # which check of stage 20
     jne wm_fail
     mov rdi, [rip + wm_doc]
     xor esi, esi
     call editor_multi_copy
     cmp eax, 1
+    mov qword ptr [rip + wm_stage], 203   # which check of stage 20
     jne wm_fail
     xor edi, edi
     mov esi, 1
     call win_clip_write
     test eax, eax
+    mov qword ptr [rip + wm_stage], 204   # which check of stage 20
     jnz wm_fail
     mov rcx, [rip + wm_window]
     API OpenClipboard
     test eax, eax
+    mov qword ptr [rip + wm_stage], 205   # which check of stage 20
     jz wm_fail
     mov ecx, 13
     API GetClipboardData
@@ -419,8 +428,10 @@ FN main
     mov esi, 64
     call win_clip_read_handle
     test rax, rax
+    mov qword ptr [rip + wm_stage], 206   # which check of stage 20
     jz wm_fail
     cmp rdx, 5
+    mov qword ptr [rip + wm_stage], 207   # which check of stage 20
     jne wm_fail
     mov r12, rax
     mov rdi, rax
@@ -428,6 +439,7 @@ FN main
     mov edx, 5
     call memeq
     test eax, eax
+    mov qword ptr [rip + wm_stage], 208   # which check of stage 20
     jz wm_fail
     mov rdi, r12
     call mem_free
@@ -437,8 +449,10 @@ FN main
     mov rdi, rax
     call win_clip_read_native_handle
     test rax, rax
+    mov qword ptr [rip + wm_stage], 209   # which check of stage 20
     jz wm_fail
     cmp rdx, 69
+    mov qword ptr [rip + wm_stage], 210   # which check of stage 20
     jne wm_fail
     mov r12, rax
     API CloseClipboard
@@ -447,6 +461,7 @@ FN main
     mov edx, 69
     call memeq
     test eax, eax
+    mov qword ptr [rip + wm_stage], 211   # which check of stage 20
     jz wm_fail
     mov rdi, r12
     call mem_free
