@@ -739,6 +739,30 @@ class Ws(host.Host):
         self.assertEqual((p / 'y/old2.txt').read_text(), 'old\n')            # redone again
         self.assertFalse((p / 'c.txt').exists())
         self.assertFalse((p / 'old.txt').exists())
+    # --- carets through an edit: at the end of a replaced range they end up after the new text ---
+
+    def test_carets_at_the_end_of_a_replaced_range_stay_after_the_new_text(self):
+        f = self.proj / 'f.go'
+        f.write_text('package main\n\nfunc  main( ) {\n}\nx\n')
+        # a formatter's edits: line 3 replaced up to the start of line 4, a line put in at line 5
+        body = edit((str(f), '-', [(3, 1, 4, 1, 'func main() {\n'), (5, 1, 5, 1, '// x\n')]))
+        exts = self.ext({'one': 'apply LEN\n' + body, 'sel': 'select-many {doc:f.go} 2 LEN\n4 1 4 1\n5 1 5 1\n'},
+                        features='selections')
+        out = self.run_ws(exts, ['key ctrl+Home', 'key Down', 'key Down', 'key Down', 'cmd wsx.one',
+                                 'wait-ext wsx running', 'wait 300', 'print-state', PD, 'key ctrl+z',
+                                 'cmd wsx.sel', 'wait 200', 'print-selections', 'cmd wsx.one', 'wait 300',
+                                 'print-selections', PD], files=('f.go',))
+        state = [l for l in out if l.startswith('tabs=')][0]
+        self.assertIn(' line=4 col=1 ', state)                         # before "}", not at 3:1
+        docs = self.docs(out)
+        self.assertEqual(docs[0], 'package main\n\nfunc main() {\n}\n// x\nx\n')
+        self.assertEqual(docs[1], docs[0])
+        sels = [out[i + 1:i + 1 + int(l[5:])] for i, l in enumerate(out) if l.startswith('sels=')]
+        self.assertEqual(sels[0], ['4 1 4 1', '5 1 5 1'], out)
+        # the caret at the replaced range's end stays before "}", the one where a line was put in
+        # goes after it
+        self.assertEqual(sels[1], ['4 1 4 1', '6 1 6 1'], out)
+
 
 for name in dir(host.Host):
     if name.startswith('test_'):

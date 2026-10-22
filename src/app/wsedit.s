@@ -1341,8 +1341,12 @@ FN ws_buf_group
     mov [rax + TP_doc], r13
 9:  EPILOGUE
 
-# FN ws_apply_group(WG*): its edits made, as one undo step (the cursor and the selection move with
-# the text around them: doc_insert and doc_delete move them)
+# FN ws_apply_group(WG*): its edits made, as one undo step. Carets and selection ends move as
+# VS Code moves them for a formatter's edits: before a range they stay, at its start they stay
+# before the new text, inside it or at its end they go after the new text (and a caret where text
+# is put in goes after it), after it they shift by the length change. So the new text goes in
+# first, at the range's start (doc_insert moves what is after that point), then the old text,
+# now after it, goes (doc_delete gathers what was inside or at its end at the new text's end)
 FN ws_apply_group
     PROLOGUE 16
     mov r12, rdi
@@ -1359,21 +1363,32 @@ FN ws_apply_group
     add rax, r13
     imul r14, rax, WE_SIZE
     add r14, [rip + we_vec + VEC_ptr]
-    mov rdx, [r14 + WE_end]
-    sub rdx, [r14 + WE_start]
-    jz 2f
-    mov rdi, rbx
-    mov rsi, [r14 + WE_start]
-    mov ecx, EK_OTHER
-    call doc_delete
-2:  cmp qword ptr [r14 + WE_len], 0
-    je 1b
+    mov r15, [r14 + WE_start]   # where the old text begins once the new text is in
+    cmp qword ptr [r14 + WE_len], 0
+    je 2f
     mov rdi, rbx
     mov rsi, [r14 + WE_start]
     mov rdx, [r14 + WE_text]
     mov rcx, [r14 + WE_len]
     mov r8d, EK_OTHER
     call doc_insert
+    add r15, [r14 + WE_len]
+    mov rax, [r14 + WE_end]
+    cmp rax, [r14 + WE_start]
+    jne 2f
+    # text put in where nothing was replaced: carets right there go after it
+    mov rdi, rbx
+    mov rsi, [r14 + WE_start]
+    mov rdx, [r14 + WE_len]
+    call ws_markers_after
+    jmp 1b
+2:  mov rdx, [r14 + WE_end]
+    sub rdx, [r14 + WE_start]
+    jz 1b
+    mov rdi, rbx
+    mov rsi, r15
+    mov ecx, EK_OTHER
+    call doc_delete
     jmp 1b
 8:  mov rdi, rbx
     call doc_end_group
@@ -1385,6 +1400,32 @@ FN ws_apply_group
     jmp 9f
 8:  call ed_touch
 9:  EPILOGUE
+
+# ws_markers_after(doc, pos, len): the carets and selection ends at pos (the primary's and every
+# other selection's) move to pos + len, after text just put in there
+ws_markers_after:
+    lea rax, [rdx + rsi]
+    cmp [rdi + DOC_cur], rsi
+    jne 1f
+    mov [rdi + DOC_cur], rax
+1:  cmp [rdi + DOC_anchor], rsi
+    jne 2f
+    mov [rdi + DOC_anchor], rax
+2:  mov rcx, [rdi + DOC_selections]
+    test rcx, rcx
+    jz 9f
+    mov r8, [rcx + DMS_count]
+    shl r8, 1
+    add rcx, DMS_DATA
+    test r8, r8
+    jz 9f
+3:  cmp [rcx], rsi
+    jne 4f
+    mov [rcx], rax
+4:  add rcx, 8
+    dec r8
+    jnz 3b
+9:  ret
 
 # FN ws_user_op(kind WK_RENAME | WK_DELETE, path cstr, to cstr or 0) -> eax 1 made, 0 refused (a toast
 # says why), -1 when it is not the engine's (no project, or outside it: the caller does it itself).
