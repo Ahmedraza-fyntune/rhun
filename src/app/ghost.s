@@ -228,6 +228,19 @@ FN ghost_rows_before
     mov rax, [rip + gh_rows]
 9:  ret
 
+# FN ghost_rows_after(doc) -> eax the ghost's rows below the document's last line (0 without
+# them): they count in the scroll's extent (wrap.s wrap_clamp)
+FN ghost_rows_after
+    xor eax, eax
+    cmp [rip + gh_doc], rdi
+    jne 9f
+    mov rcx, [rdi + DOC_nlines]
+    dec rcx
+    cmp [rip + gh_line], rcx
+    jne 9f
+    mov rax, [rip + gh_rows]
+9:  ret
+
 # FN ghost_tail_draw(doc, y): below the document's last line (drawn down to y), the ghost's lines
 # after the first when the ghost is on that line (there is no next line to put them before)
 FN ghost_tail_draw

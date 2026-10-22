@@ -475,7 +475,21 @@ FN wrap_clamp
     add r13, rax
     inc r12
     jmp 1b
-2:  # the end is above the bottom edge: put the last row there
+2:  # presentation: rows of ghost text below the last line are part of the end (ghost.s)
+    mov rdi, rbx
+    call ghost_rows_after
+    test eax, eax
+    jz 3f
+    imul eax, [rip + g_lh]
+    add r13, rax
+    cmp r13, r14
+    jge 9f
+    mov rsi, r13                # the end above the bottom edge: up by the gap
+    sub rsi, r14
+    mov rdi, rbx
+    call scroll_by_px
+    jmp 9f
+3:  # the end is above the bottom edge: put the last row there
     mov rsi, [rbx + DOC_nlines]
     dec rsi
     mov rdi, rbx
