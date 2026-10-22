@@ -90,6 +90,25 @@ class Ghost(pres.Base):
         self.assertTrue(any(l.startswith('view mode=rows') for l in out), out)
         self.assertIn('    let z = 3;', out)
 
+    def test_lines_below_the_last_line_show_after_it(self):
+        # the caret on the document's last (empty) line: no next line to sit before, the rows follow it
+        self.answer(body(item(6, 1, 6, 1, 'aaaa\nbbbb\ncccc')))
+        out = self.run_p(['key ctrl+End', 'print-xy 6 1'])
+        _, y = map(int, out[-1].split())
+        plain = self.shot(self.start() + ['key ctrl+End'], 'plain.ppm')
+        ghost = self.shot(self.start() + ['key ctrl+End', 'cmd inline_complete', 'wait 200'], 'ghost.ppm')
+        out = self.run_p(self.start() + ['key ctrl+End', 'cmd inline_complete', 'wait 200', 'print-present ghost'])
+        self.assertEqual(self.ghost(out), ['ghost 6:1 aaaa\\nbbbb\\ncccc'])
+        for row in (1, 2):              # the second and third lines, in the rows below line 6
+            yy = y + row * 21
+            self.assertTrue(self.differ(plain, ghost, yy), row)
+        yy = y + 3 * 21                 # nothing past them
+        self.assertFalse(self.differ(plain, ghost, yy))
+
+    def differ(self, a, b, y):
+        return any(pres.host.ppm_pixel(a, x, yy) != pres.host.ppm_pixel(b, x, yy)
+                   for yy in range(y, y + 21, 2) for x in range(40, 140, 2))
+
     def test_typing_pause_asks_and_the_setting(self):
         out = self.run_p(self.start() + END2 + ['type z', 'wait 500', 'print-present ghost'])
         asked = self.asked()
