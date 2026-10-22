@@ -1137,5 +1137,8 @@ pasted_invalid_wide: .short 0xd800,0
 pasted_empty_wide: .short 0
 ab: .ascii "ab"
 abz: .ascii "abz"
+# Windows rejects a class name or wide string at an odd address (ERROR_NOACCESS); Wine accepts it.
+.p2align 1
 target_class: .short 'r','h','u','n','-','r','e','e','n','t','r','y','-','t',0
+.p2align 1
 owner_class: .short 'r','h','u','n','-','r','e','e','n','t','r','y','-','o',0
