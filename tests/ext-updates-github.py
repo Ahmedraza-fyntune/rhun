@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Extension updates against github.com itself (network): rhun-editor/showcase installed at v0.1.0,
-the update check finding v0.1.2 (through GitHub's /releases/latest redirect until
-rhun-editor/extensions publishes its index, then from the index), the update, Roll back to 0.1.0
-(automatic updates then leave v0.1.2 alone) and the update again. A second test serves an index
+the update check finding showcase's latest (from the rhun extensions index, or GitHub's
+/releases/latest redirect without one), the update, Roll back to 0.1.0 (automatic updates then
+leave that version alone) and the update again. A second test serves an index
 pinning showcase v0.1.2 (its digests taken from the release's sha256sums.txt) on 127.0.0.1 and
 sends every other request on to github.com: the reviewed version installs by itself, its archive
 checked against the index. Each run gets its own HOME. SHOTS=DIR keeps screenshots of the details
@@ -12,6 +12,7 @@ import http.server
 import threading
 import urllib.request
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -22,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink = false\n'
           '[files]\nrestore_session = false\nrestore_project = false\n'
-          '[updates]\ncheck = false\n[git]\nenabled = false\n')
+          '[updates]\ncheck = false\nextensions = check\n[git]\nenabled = false\n')
 
 
 class GitHubUpdates(unittest.TestCase):
@@ -65,47 +66,51 @@ class GitHubUpdates(unittest.TestCase):
                                'print-ext-updates', 'cmd extensions', 'ext-page showcase', 'wait 300',
                                *self.shot('showcase-update.ppm')])
         line = [l for l in out if l.startswith('rhun-editor/showcase ')][0]
-        self.assertRegex(line, r'^rhun-editor/showcase installed=0\.1\.0 latest=0\.1\.(\d+) state=available '
-                               r'from=(github|index)$')
-        reviewed = line.endswith('from=index')
+        m = re.match(r'^rhun-editor/showcase installed=0\.1\.0 latest=(\d+\.\d+\.\d+) state=available '
+                     r'from=(github|index)$', line)
+        self.assertTrue(m, line)
+        latest, reviewed = m.group(1), m.group(2) == 'index'
         print('update source:', 'the rhun extensions index' if reviewed else "GitHub's latest-release redirect",
               file=sys.stderr)
 
-        # 0.1.0 -> 0.1.2 adds only an icon and a color: no new access, so only an unreviewed version asks
-        steps = ['wait-ext showcase running', 'ext-update showcase', 'wait-ext-updates', 'print-dialog']
-        if not reviewed:
-            steps += ['dialog yes', 'wait-ext-updates']
+        # the latest is whatever showcase has released (and the index reviewed): an unreviewed version, or one
+        # asking for new access, asks first
+        steps = ['wait-ext showcase running', 'ext-update showcase', 'wait-ext-updates', 'print-dialog',
+                 'dialog yes', 'wait-ext-updates']
         out = self.run_editor(steps + ['wait-ext showcase running', 'print-ext-versions showcase', 'print-toast'])
-        if reviewed:
-            self.assertIn('dialog=none', out)
-        else:
-            self.assertIn('dialog=Update “Showcase” to 0.1.2?', out)
+        if not reviewed:
+            self.assertIn(f'dialog=Update “Showcase” to {latest}?', out)
             self.assertIn('text=Not in the rhun extensions index: nobody has reviewed this version.', out)
-        self.assertIn('version=0.1.2 source=github tag=v0.1.2 previous=0.1.0 link=no fresh=0', out)
+        self.assertIn(f'version={latest} source=github tag=v{latest} previous=0.1.0 link=no fresh=0', out)
 
         out = self.run_editor(['wait-ext showcase running', 'cmd extensions', 'ext-page showcase', 'wait 300',
                                *self.shot('showcase-rollback.ppm'), 'ext-rollback showcase',
                                'wait-ext showcase running', 'print-toast', 'print-ext-versions showcase'])
         self.assertIn('toast=Rolled back Showcase to 0.1.0', out)
-        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.1.2 link=no fresh=0', out)
+        self.assertIn(f'version=0.1.0 source=github tag=v0.1.0 previous={latest} link=no fresh=0', out)
         state = (self.work / 'state/rhun/extension-updates').read_text(encoding='utf-8')
-        self.assertIn('skip = v0.1.2', state)
+        self.assertIn(f'skip = v{latest}', state)
 
         # automatic updates (install mode, checking every half second) leave the version rolled back from
+        # the steps above only check (extensions = check), so a reviewed version is not installed by
+        # itself before the test asks for it; this one installs as the default does
+        config = self.work / 'config/rhun/config'
+        config.write_text(config.read_text(encoding='utf-8').replace('extensions = check', 'extensions = install'),
+                          encoding='utf-8')
         env = dict(self.env, RHUN_EXT_UPDATE_EVERY='500')
         out = self.run_editor(['wait-ext showcase running', 'wait 2000', 'wait-ext-updates', 'print-ext-updates',
                                'print-ext-versions showcase'], env=env)
-        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=0.1.2 link=no fresh=0', out)
-        self.assertTrue(any(l.startswith('rhun-editor/showcase installed=0.1.0 latest=0.1.2 state=skipped')
+        self.assertIn(f'version=0.1.0 source=github tag=v0.1.0 previous={latest} link=no fresh=0', out)
+        self.assertTrue(any(l.startswith(f'rhun-editor/showcase installed=0.1.0 latest={latest} state=skipped')
                             for l in out), out)
 
-        steps = ['wait-ext showcase running', 'ext-update showcase', 'wait-ext-updates', 'print-dialog']
-        if not reviewed:
-            steps += ['dialog yes', 'wait-ext-updates']
         out = self.run_editor(steps + ['wait-ext showcase running', 'print-ext-versions showcase'])
-        self.assertIn('version=0.1.2 source=github tag=v0.1.2 previous=0.1.0 link=no fresh=0', out)
+        self.assertIn(f'version={latest} source=github tag=v{latest} previous=0.1.0 link=no fresh=0', out)
 
     def test_an_index_pinned_release_installs_by_itself_checked_against_the_index(self):
+        config = self.work / 'config/rhun/config'     # automatic updates install, as by default
+        config.write_text(config.read_text(encoding='utf-8').replace('extensions = check', 'extensions = install'),
+                          encoding='utf-8')
         target = 'windows-x64' if os.name == 'nt' else 'macos-arm64' if sys.platform == 'darwin' else 'linux-x86_64'
         sums = urllib.request.urlopen('https://github.com/rhun-editor/showcase/releases/download/v0.1.2/'
                                       'sha256sums.txt', timeout=60).read().decode()

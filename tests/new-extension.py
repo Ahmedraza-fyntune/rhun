@@ -575,6 +575,8 @@ class RealTemplates(Base):
                            timeout=600)
         if r.returncode and (b'offline' in r.stderr or b'failed to download' in r.stderr):
             self.skipTest('the SDK crate is not in the cargo cache')
+        if r.returncode and b'rustup could not choose a version' in r.stderr:
+            self.skipTest('no Rust toolchain under this HOME (set RUSTUP_HOME and CARGO_HOME to build)')
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((d / 'target/debug' / ('real-rust.exe' if WINDOWS else 'real-rust')).exists())
 
