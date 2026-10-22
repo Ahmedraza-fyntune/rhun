@@ -577,7 +577,12 @@ def on_run(command, doc, versions):
             import subprocess
             # /usr/bin/git on macOS is Xcode's shim: xcrun finds the real git, from its cache or by
             # running xcodebuild, which the sandbox makes slow enough to time out (xcrun_verbose
-            # says which it was)
+            # says which it was). rhun fills the cache beside the starting extension: wait for it
+            import time
+            for _ in range(300):
+                if os.path.exists(os.path.join(os.environ['RHUN_STATE'], 'xcrun_db')):
+                    break
+                time.sleep(0.1)
             env = dict(os.environ, xcrun_verbose='1')
             for args in (['--version'], ['log', '--oneline', '-n', '1']):
                 done = subprocess.run(['/usr/bin/git', *args], cwd=os.environ['RHUN_PROJECT'], capture_output=True,
