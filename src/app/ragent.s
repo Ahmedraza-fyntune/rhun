@@ -587,7 +587,7 @@ ag_session_tick:
 9:  ret
 
 # attach 0: a window reconnected to its session: a line per channel in use, "CH MODE FLAGS STATUS"
-#   (FLAGS: 1 the program exited, 2 its output ended); the credits start again on both sides. A
+#   and, for a confined child that failed so, "CFAIL" (FLAGS: 1 the program exited, 2 its output ended); the credits start again on both sides. A
 #   session's programs stay listed until the window closes their channels, so an exit sent while the
 #   connection was already gone is not lost.
 ag_attach:
@@ -626,7 +626,18 @@ ag_attach:
     lea rdi, [rip + ag_tmp]
     mov esi, [rbx + AC_status]
     call sb_push_u64
+    # an exit x never reached the window with: its child's confinement failure, if any
+    test dword ptr [rbx + AC_flags], ACF_CONFINED
+    jz 22f
+    cmp dword ptr [rbx + AC_cfail], 0
+    je 22f
     lea rdi, [rip + ag_tmp]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ag_tmp]
+    mov esi, [rbx + AC_cfail]
+    call sb_push_u64
+22: lea rdi, [rip + ag_tmp]
     mov esi, 10
     call sb_push_byte
     mov qword ptr [rbx + AC_credit], AG_WINDOW
