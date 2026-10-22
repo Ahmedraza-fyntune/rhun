@@ -58,6 +58,7 @@ ENDSTRUCT TCL_SIZE
 calls: .zero VEC_SIZE           # CL*
 grants: .zero VEC_SIZE          # (caller EXT*, name cstr) pairs: allowed for this session
 asking: .quad 0                 # the CL the dialog asks about
+ticking: .quad 0                # tools_tick runs: closing a dialog inside it does not run it again
 out: .zero SB_SIZE
 tmp: .zero SB_SIZE
 num: .zero 32
@@ -831,6 +832,15 @@ call_done:
 #   whose tool's extension did not start in time fails
 FN tools_tick
     PROLOGUE
+    cmp qword ptr [rip + ticking], 0
+    jne 99f
+    mov qword ptr [rip + ticking], 1
+    call tick
+    mov qword ptr [rip + ticking], 0
+99: EPILOGUE
+
+tick:
+    PROLOGUE
     call time_ms
     mov r13, rax
     xor r12d, r12d
@@ -846,15 +856,18 @@ FN tools_tick
     jz 11f
     cmp dword ptr [rax + EXT_status], ES_STOPPED
     jb 11f
+    xor r14d, r14d
     cmp dword ptr [rbx + TCL_state], TCS_ASKING
-    jne 12f
-    mov qword ptr [rip + asking], 0     # its dialog closes
-    xor edi, edi
-    call app_dialog_answer
-12: mov rdi, rbx
+    sete r14b
+    mov rdi, rbx                    # the call goes first (freed), then its dialog closes
     lea rsi, [rip + .Le_owner_gone]
     call answer_error
-    xor r12d, r12d
+    test r14d, r14d
+    jz 12f
+    mov qword ptr [rip + asking], 0
+    xor edi, edi
+    call app_dialog_answer
+12: xor r12d, r12d
     jmp 1b
 11: cmp dword ptr [rbx + TCL_state], TCS_START
     jne 1b
@@ -1115,14 +1128,17 @@ withdraw:
     jz 2f
     mov rdi, rax
     call review_withdraw_waiter
-2:  cmp dword ptr [rbx + TCL_state], TCS_ASKING
-    jne 3f
-    mov qword ptr [rip + asking], 0     # its dialog closes
+2:  xor r12d, r12d
+    cmp dword ptr [rbx + TCL_state], TCS_ASKING
+    sete r12b
+    mov rdi, rbx                # the call goes first (freed), then its dialog closes
+    call call_done
+    test r12d, r12d
+    jz 3f
+    mov qword ptr [rip + asking], 0
     xor edi, edi
     call app_dialog_answer
-3:  mov rdi, rbx
-    call call_done
-    EPILOGUE
+3:  EPILOGUE
 
 # FN tools_cancel(ext, id) -> eax 1 when it was one of its tool calls: answered cancelled
 FN tools_cancel
