@@ -2838,6 +2838,7 @@ ENDSTRUCT AS_SIZE
 .equ DS_PEND, 256                   # requests in flight per session
 .equ DAP_BODY_MAX, 8388608          # one message
 .equ DAP_CONNECT_MS, 10000          # tcp: the adapter accepts a connection within this
+.equ DAP_COPY_MS, 60000             # remote window: an adapter's extension reaches the host within this
 .equ DAP_CONNECT_EVERY, 100         # and is tried this often
 .equ DAP_LOOPBACK, 0x0100007f       # 127.0.0.1 in network order
 .equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
@@ -3038,6 +3039,8 @@ F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop
 F DS_wgen, 4            # the last round of watch evaluations sent
 F DS_rconn, 4           # remote window, tcp: 0 no attempt, 1 the host connects, 2 connected, 3 refused
 F DS_rtry, 4            # and the attempt's number (an older attempt's answer is ignored)
+F DS_rcopy, 4           # remote window: 1 while its extension's files are copied to the host first
+F DS_pad3, 4
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
 F DS_wlist, 4           # the watch list's version its last round evaluated (g_dwlist)
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
