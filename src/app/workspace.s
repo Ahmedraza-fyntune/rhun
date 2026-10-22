@@ -846,6 +846,9 @@ FN workspace_open_file
 .endif
     test eax, eax
     jz 41f
+    # a window a file opened adopts its folder as a project first (app_switch_project promotes it)
+    mov rdi, [rip + g_project]
+    call app_switch_project
     mov rdi, [rip + g_project]
     call ws_carry_for_set
     call workspace_reset
