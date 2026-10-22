@@ -5,6 +5,7 @@
 #   print-md-body WIDTH PATH, md-demo-body PATH: the same for a rich-document body (md_from_body:
 #                         "doc LEN" + Markdown, "base LEN" + folder)
 #   md-follow I           md_open_link on md-demo's link I: "followed I 1" when rhun followed it
+#   md-anchor TEXT        md_anchor on md-demo's document: "anchor TEXT Y" (-1: no such heading)
 #   pic-demo PATH         a static picture (pic_new, a picture body) drawn at the top of md-demo, a
 #                         quarter of its width high; "pic-demo bad LINE" when it cannot be read
 .include "rhun.inc"
@@ -15,7 +16,7 @@
 md_ctl:
     .quad .Lc_print_md, c_print_md, .Lc_md_demo, c_md_demo
     .quad .Lc_print_md_body, c_print_md_body, .Lc_md_demo_body, c_md_demo_body
-    .quad .Lc_pic_demo, c_pic_demo, .Lc_md_follow, c_md_follow
+    .quad .Lc_pic_demo, c_pic_demo, .Lc_md_follow, c_md_follow, .Lc_md_anchor, c_md_anchor
     .quad 0, 0
 demo_place: .long -1
 
@@ -77,6 +78,49 @@ c_md_demo_body:
     mov dword ptr [rip + as_body], 0
     add rsp, 8
     ret
+
+# md-anchor TEXT
+c_md_anchor:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rdi, [rip + demo_md]
+    test rdi, rdi
+    jz 8f
+    mov rsi, r12
+    mov rdx, r13
+    call md_anchor
+    mov r14d, eax
+    mov rdi, rbx
+    lea rsi, [rip + .Lanchor]
+    call sb_push_cstr
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    mov rdi, rbx
+    mov esi, ' '
+    call sb_push_byte
+    test r14d, r14d
+    jns 1f
+    mov rdi, rbx
+    mov esi, '-'
+    call sb_push_byte
+    mov r14d, 1
+1:  mov rdi, rbx
+    mov esi, r14d
+    call sb_push_u64
+    mov rdi, rbx
+    mov esi, 10
+    call sb_push_byte
+    xor eax, eax
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lnone]
+    call sb_push_cstr
+    xor eax, eax
+    EPILOGUE
 
 # md-follow I
 c_md_follow:
@@ -346,6 +390,8 @@ demo_draw:
 .Lc_pic_demo: .asciz "pic-demo"
 .Lbad: .asciz "pic-demo bad "
 .Lc_md_follow: .asciz "md-follow"
+.Lc_md_anchor: .asciz "md-anchor"
+.Lanchor: .asciz "anchor "
 .Lfollowed: .asciz "followed "
 .Lnone: .asciz "none\n"
 .Lname: .asciz "md-demo"

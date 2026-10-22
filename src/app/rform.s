@@ -72,12 +72,14 @@ F FM_focus, 4           # the field with the keyboard, -1
 F FM_scroll, 4
 F FM_slot, 4            # its instance
 F FM_contenth, 4
-F FM_pad, 4
+F FM_pend, 4            # a patch being checked: the fields it would leave so far, -1 before any
 ENDSTRUCT FM_SIZE
 
 .bss
 .p2align 3
 rr_f: .zero RR_SIZE
+seen_p: .zero 8 * FM_FIELDS     # form_check: the keys a form op lists
+seen_l: .zero 8 * FM_FIELDS
 evb: .zero SB_SIZE
 tsb: .zero SB_SIZE
 rec_key: .quad 0                # a field record being read: its parts
@@ -124,7 +126,7 @@ FN form_new
     call memset
     mov [r12 + FM_slot], ebx
     mov dword ptr [r12 + FM_focus], -1
-    mov edi, FF_SIZE * FM_FIELDS
+    mov edi, FF_SIZE * FM_FIELDS * 2    # a form op lists its fields before the old ones go
     call mem_alloc
     mov [r12 + FM_fields], rax
     mov rax, r12
@@ -154,6 +156,10 @@ FN form_free
     mov rbx, rdi
     test rbx, rbx
     jz 9f
+    cmp [rip + menu_form], rbx  # an open select's menu has nothing to pick into now
+    jne 0f
+    mov qword ptr [rip + menu_form], 0
+0:
     xor r12d, r12d
 1:  cmp r12d, [rbx + FM_n]
     jae 2f
@@ -268,11 +274,16 @@ read_record:
     mov [rip + rec_extralen], rax
     lea rcx, [r14 + 1]
     mov [rip + rec_label], rcx
+    mov rdx, r13                # the bytes left: lengths are compared with them, never added first
+    sub rdx, rcx
+    cmp [rip + rec_labellen], rdx
+    ja 8f
+    sub rdx, [rip + rec_labellen]
+    cmp [rip + rec_extralen], rdx
+    ja 8f
     add rcx, [rip + rec_labellen]
     mov [rip + rec_extra], rcx
     add rcx, [rip + rec_extralen]
-    cmp rcx, r13
-    ja 8f
     mov [rip + rec_end], rcx
     mov rdi, [rip + rec_label]  # the label is one line
     mov rcx, [rip + rec_labellen]
@@ -365,7 +376,15 @@ extra_check:
 8:  xor eax, eax
     EPILOGUE
 
-# form_check(FM*, data, len, n or -1 for a field op) -> eax 0, 1 a syntax error, 2 toobig
+# form_check_begin(FM*): a patch's checking starts (its ops are counted together)
+FN form_check_begin
+    test rdi, rdi
+    jz 9f
+    mov dword ptr [rdi + FM_pend], -1
+9:  ret
+
+# form_check(FM*, data, len, n or -1 for a field op) -> eax 0, 1 a syntax error (a key listed twice
+#   in a form op too), 2 toobig (the patch's ops together leaving more than 200 fields)
 FN form_check
     PROLOGUE 16
     mov rbx, rdi
@@ -386,6 +405,33 @@ FN form_check
     jz 8f
     cmp eax, 2
     je 7f
+    cmp r15d, FM_FIELDS         # its key: listed once
+    jae 7f
+    xor ecx, ecx
+11: cmp ecx, r15d
+    jae 12f
+    lea rax, [rip + seen_p]
+    mov rdi, [rax + rcx*8]
+    lea rax, [rip + seen_l]
+    mov rsi, [rax + rcx*8]
+    cmp rsi, [rip + rec_keylen]
+    jne 13f
+    push rcx
+    push rcx
+    mov rcx, rsi
+    mov rsi, [rip + rec_key]
+    repe cmpsb
+    pop rcx
+    pop rcx
+    je 8f
+13: inc ecx
+    jmp 11b
+12: lea rax, [rip + seen_p]
+    mov rcx, [rip + rec_key]
+    mov [rax + r15*8], rcx
+    lea rax, [rip + seen_l]
+    mov rcx, [rip + rec_keylen]
+    mov [rax + r15*8], rcx
     inc r15d
     cmp r14d, -1
     jne 1b
@@ -397,20 +443,29 @@ FN form_check
     jne 8f
     cmp r15d, FM_FIELDS
     ja 7f
+    mov [rbx + FM_pend], r15d   # what the patch leaves after it
     xor eax, eax
     EPILOGUE
 4:  cmp r15d, 1
     jne 8f
-    # a new key on a full form: too many
+    # a new key: too many when the patch's ops so far leave 200
+    mov eax, [rbx + FM_pend]
+    test eax, eax
+    jns 41f
+    mov eax, [rbx + FM_n]
+41: mov [rsp], eax
     mov rdi, rbx
     mov rsi, [rip + rec_key]
     mov rdx, [rip + rec_keylen]
     call field_find
     cmp eax, -1
     jne 5f
-    cmp dword ptr [rbx + FM_n], FM_FIELDS
+    cmp dword ptr [rsp], FM_FIELDS
     jae 7f
-5:  xor eax, eax
+    inc dword ptr [rsp]
+5:  mov eax, [rsp]
+    mov [rbx + FM_pend], eax
+    xor eax, eax
     EPILOGUE
 7:  mov eax, 2
     EPILOGUE
@@ -1611,7 +1666,8 @@ select_open:
     call fm_ff
     mov r13, rax
     mov [rip + menu_form], rbx
-    mov [rip + menu_field], r12d
+    mov eax, [r13 + FF_tf + TF_id]  # the field by its identity: a form op may reorder the fields
+    mov [rip + menu_field], eax
     lea rdi, [rip + tsb]        # the options as cstrs
     call sb_clear
     mov rsi, [r13 + FF_opts]
@@ -1667,10 +1723,18 @@ select_pick:
     mov rbx, [rip + menu_form]
     test rbx, rbx
     jz 9f
-    mov r12d, [rip + menu_field]
-    cmp r12d, [rbx + FM_n]
+    xor r12d, r12d              # the field the menu was opened for, wherever it is now
+1:  cmp r12d, [rbx + FM_n]
     jae 9f
-    mov eax, [rip + g_menu_index]
+    mov rdi, rbx
+    mov esi, r12d
+    call fm_ff
+    mov ecx, [rax + FF_tf + TF_id]
+    cmp ecx, [rip + menu_field]
+    je 2f
+    inc r12d
+    jmp 1b
+2:  mov eax, [rip + g_menu_index]
     shl rax, 4
     lea rcx, [rip + menu_items]
     mov r13, [rcx + rax]
@@ -1718,6 +1782,8 @@ FN form_key
     mov esi, eax
     call fm_ff
     mov r15, rax
+    test dword ptr [r15 + FF_flags], FFF_DISABLED   # disabled since it got the keyboard: no input
+    jnz 8f
     mov eax, [r15 + FF_type]
     cmp eax, FT_TEXT
     je .Lfk_text
@@ -1910,6 +1976,8 @@ FN form_field
     cmp esi, -1
     je 8f
     call fm_ff
+    test dword ptr [rax + FF_flags], FFF_DISABLED   # a disabled field takes no text
+    jnz 8f
     mov ecx, [rax + FF_type]
     cmp ecx, FT_TEXT
     je 1f
