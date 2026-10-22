@@ -152,5 +152,11 @@ class Forms(ViewsBase):
         self.assertTrue(f['name'].endswith(' value=Ada'), f['name'])
         self.assertFalse([l for l in self.fake_log() if ' change ' in l and ' name ' in l])
 
+    def test_many_ops_on_one_new_key_count_it_once(self):
+        out = self.shown('cmd viewfake.formsame', 'wait 400')
+        f = self.fields(out)
+        self.assertEqual(len(f), 7, list(f))
+        self.assertFalse(self.errors())
+
 if __name__ == '__main__':
     unittest.main()
