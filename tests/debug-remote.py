@@ -88,7 +88,10 @@ class DockerHost(unittest.TestCase):
         if docker('image', 'inspect', IMAGE, check=False).returncode != 0:
             docker('build', '-q', '--platform', 'linux/amd64', '-t', IMAGE, '-', input=DOCKERFILE.encode())
         docker('rm', '-f', HOST, check=False)
-        docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, IMAGE, 'sleep', 'infinity')
+        # the host's free ports (bind to port 0) come from a range this machine does not use, so a
+        #   port picked here instead of there shows
+        docker('run', '-d', '--platform', 'linux/amd64', '--name', HOST, '--sysctl',
+               'net.ipv4.ip_local_port_range=20000 20999', IMAGE, 'sleep', 'infinity')
         steps = [{'file': '/root/proj/a.c', 'line': 6, 'function': 'main', 'locals': {'total': 0}},
                  {'file': '/root/proj/a.c', 'line': 9, 'function': 'main', 'output': 'done\n'}]
         docker('exec', '-i', HOST, 'sh', '-c', 'mkdir -p /root/proj && cat > /root/proj/scenario.json',
@@ -126,9 +129,9 @@ class DockerHost(unittest.TestCase):
         shutil.copytree(EXTS / 'rhun-tests/debugfake/templates', dst / 'templates')
         return self.base / 'exts'
 
-    def run_tcp(self, lines, mode='', timeout=180):
+    def run_tcp(self, lines, mode='', timeout=180, ini=None, on_line=None):
         docker('exec', '-i', HOST, 'sh', '-c', 'mkdir -p /root/proj/.rhun && cat > /root/proj/.rhun/launch.ini',
-               input=b'[Run]\ntype = faketcp\nprogram = scenario.json\nstopOnEntry = yes\n')
+               input=ini or b'[Run]\ntype = faketcp\nprogram = scenario.json\nstopOnEntry = yes\n')
         script = self.base / 't.rsc'
         # the extension never ran on the host: its folder (and so its adapter) is copied there first
         docker('exec', HOST, 'rm', '-rf', '/root/.cache/rhun-remote/extensions')
@@ -139,11 +142,21 @@ class DockerHost(unittest.TestCase):
                                       'quit']) + '\n')
         env = dict(os.environ, HOME=str(self.base / 'home'), XDG_CONFIG_HOME=str(self.base / 'config'),
                    XDG_STATE_HOME=str(self.base / 'state'), TMPDIR=str(self.base / 'tmp'))
-        p = subprocess.run([str(EXE), '--headless', '1000x700', '--remote', 'docker:' + HOST, '/root/proj',
-                            '--extensions', str(self.extension(mode)), '--script', str(script)],
-                           capture_output=True, timeout=timeout, env=env)
-        out = p.stdout.decode(errors='replace').splitlines()
-        self.assertEqual(p.returncode, 0, p.stderr.decode(errors='replace')[-3000:])
+        p = subprocess.Popen([str(EXE), '--headless', '1000x700', '--remote', 'docker:' + HOST, '/root/proj',
+                              '--extensions', str(self.extension(mode)), '--script', str(script)],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        out = []
+        try:
+            for raw in p.stdout:
+                line = raw.decode(errors='replace').rstrip('\n')
+                out.append(line)
+                if on_line:
+                    on_line(line)
+            self.assertEqual(p.wait(timeout=timeout), 0, out)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
         return out
 
     def sessions(self, out):
@@ -163,6 +176,21 @@ class DockerHost(unittest.TestCase):
         self.assertEqual((self.field(sessions[1], 'state'), self.field(sessions[1], 'exit')), ('ended', '3'), out)
         self.assertTrue([l for l in out if l.startswith('stdout DAP server listening at: 127.0.0.1:')], out)
         self.assertIn('stdout done', out)
+
+    def test_the_port_is_one_free_on_the_host(self):
+        # round 4: ${port} was a port free here; the adapter binds it on the host
+        out = self.run_tcp(['wait-debug paused 30000', 'print-console', 'debug-stop', 'wait-debug ended 20000'])
+        ports = [int(l.rsplit(':', 1)[1]) for l in out if l.startswith('stdout DAP server listening at: 127.0.0.1:')]
+        self.assertTrue(ports and 20000 <= ports[0] <= 20999, out)
+
+    def test_a_late_answer_for_an_ended_session_is_ignored(self):
+        # round 4: an answer about a session that ended (its slot made anew) changed the new one's
+        #   connection: while an attempt waits for the host, an answer naming another session comes
+        #   (debug-connect-answer); nobody listens on port 1, so the session must stay connecting
+        out = self.run_tcp(['debug-connect-answer 99 0', 'wait 300', 'print-debug', 'debug-stop',
+                            'wait-debug ended 20000'], ini=b'[Run]\ntype = faketcp\nserver = 1\n')
+        sessions = self.sessions(out)
+        self.assertEqual(self.field(sessions[0], 'state'), 'connecting', out)
 
     def test_an_adapter_listening_late(self):
         out = self.run_tcp(['wait-debug paused 30000', 'print-debug', 'debug-stop', 'wait-debug ended 20000',
