@@ -249,7 +249,7 @@ version may use the old embedded installer, so run this step once after upgradin
 handlers. Later updates refresh registration for installed copies without changing defaults or
 opening Settings. Portable copies stay unregistered unless you explicitly configure them.
 
-Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead. `rhun new-extension` asks its questions as plain lines there (a number or the first letter for a choice) and runs its steps in PowerShell with `curl.exe` and `tar.exe`.
+Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead. `rhun new-extension` and `rhun submit-extension` ask their questions as plain lines there (a number or the first letter for a choice) and run their steps in PowerShell with `curl.exe` and `tar.exe` (and `gh.exe` when it is installed).
 
 Settings, themes and grammars live under `%APPDATA%\rhun`; saved sessions live under `%LOCALAPPDATA%\rhun`. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those parent directories. `HOME` defaults to `%USERPROFILE%`. Session filenames encode drive letters, separators and Windows filename restrictions. A project path whose encoded session filename exceeds 240 bytes opens normally but shows a warning and does not persist a session.
 
@@ -1278,6 +1278,33 @@ menu) asks the same in five steps, the last one the folder (`~/code/NAME` by def
 (alt+left) between them. The download runs in the background with a progress card and Cancel;
 when it is done a notification offers **Open Folder** (this window), **New Window** and **Dev
 Install** (Link a Folder on it).
+
+#### Submitting to the index
+
+Once a release is published (tag `vX.Y.Z`, the templates' release workflow), `rhun
+submit-extension [DIR]` (DIR is the extension's folder, the current one by default) proposes it to
+the [rhun extensions index](https://github.com/rhun-editor/extensions). It reads `owner`, `name`
+and `version` from `extension.ini` (the tag is `vVERSION`; `--tag` picks another), the release's
+`sha256sums.txt` and the tag's commit, and asks the category (`languages formatters themes testing
+debugging tools packs other`), keywords and the maintainer (gh's or git's GitHub user by default).
+When the index already lists the extension, its category, keywords and maintainer are the
+defaults and what only the index's maintainers set (`featured`, `rhun`) stays. It warns when
+`.github/workflows/release.yml` does not attest the archives (`actions/attest-build-provenance`):
+the index's check needs that attestation. Then it prints the entry, `OWNER/NAME.ini` as the
+index's files are written (the tag, the commit and a `sha256.TARGET` line per archive), and opens
+the pull request:
+
+- with [gh](https://cli.github.com) installed and logged in, it offers to do it all: a fork of
+  the index, the branch `submit-OWNER-NAME-TAG` with the file, and `gh pr create`;
+- otherwise (or when you say no) it opens GitHub's page for the new file with the entry filled in,
+  which forks the index for you and proposes the change; for an extension already listed, GitHub's
+  editor for its file, where the printed entry replaces the text. The address is printed too.
+
+Without a terminal it takes flags: `--category C --keywords "a b" --maintainer M`, `--gh` for the
+pull request through gh (otherwise the browser), `--yes` for the defaults (`other`, and gh when it
+is logged in). In rhun, **Extensions: Submit to Index…** (and **Submit to Index…** on a linked
+extension's page) asks the folder, then the same questions, with the progress and the result in
+notifications (**Open** for the pull request; **Open Again** and **Copy Entry** for the browser).
 
 `rhun://extension/OWNER/NAME` and `rhun://extension/OWNER/NAME@VERSION` links open the same Add
 dialog (the site's catalog uses them for its Install buttons).

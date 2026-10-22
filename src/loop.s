@@ -42,6 +42,11 @@ FN watch_add
     inc dword ptr [rip + nwatch]
 1:  ret
 
+# watch_count() -> eax the fds watched (rhun submit-extension waits for the browser's opener)
+FN watch_count
+    mov eax, [rip + nwatch]
+    ret
+
 # watch_remove(fd)
 FN watch_remove
     lea r8, [rip + watches]

@@ -2351,6 +2351,7 @@ g_commands:
     COMMAND link_extension_folder, "Link Extension Folder (development)", cmd_link_extension_folder, ""
     COMMAND install_extension_archive, "Install Extension from Archive", cmd_install_extension_archive, ""
     COMMAND new_extension, "Extensions: New Extension\342\200\246", cmd_new_extension, ""
+    COMMAND submit_extension, "Extensions: Submit to Index\342\200\246", cmd_submit_extension, ""
     COMMAND new_terminal, "New Terminal", cmd_new_terminal, "ctrl+shift+` ctrl+shift+~"
     # tasks and terminals
     COMMAND toggle_problems, "Toggle Problems", cmd_toggle_problems, "ctrl+shift+m"

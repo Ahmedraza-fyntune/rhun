@@ -1,0 +1,10 @@
+# rhun-editor/extensions: demo/hello.ini
+category = other
+keywords = charts statistics rust example
+maintainer = vshvedov
+# the reviewed release; a new version is a new pull request
+tag = v0.2.0
+commit = 50bbdaf4e7d18d2e8cd919f148bfe01c2692cf1f
+sha256.linux-x86_64 = 6809fc37b692c950d1e329679712ec3515264ac8967b5f1eb302a61d31d58990
+sha256.macos-arm64 = 2376c4b3080fcf654335cb7716439589a06348defbbcb196b6fdf026c09e5b5b
+sha256.windows-x64 = f5f1abed55b3ab6c8065812877aaf3e7db1ed74b9709c34776d7607048b3dc10

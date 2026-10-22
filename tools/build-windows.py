@@ -86,9 +86,11 @@ def assets():
     # extension management: the update check (src/app/extupdate.s) and the index fetch
     # (src/app/extindexfile.s); their inputs come in RHUN_EC_* and RHUN_EX_* variables
     # and a remote window's Linux agent (src/app/remote.s), its inputs in RHUN_RD_* variables, and
-    # New Extension (src/app/newext.s), its inputs in RHUN_NE_* variables
+    # New Extension and Submit to Index (src/app/newext.s, submitext.s), their inputs in RHUN_NE_*
+    # and RHUN_SX_* variables
     for script, symbol in (('extcheck.ps1', 'ext_check_script'), ('extindex.ps1', 'ext_index_script'),
-                           ('remote.ps1', 'remote_download_script'), ('newext.ps1', 'newext_ps_script')):
+                           ('remote.ps1', 'remote_download_script'), ('newext.ps1', 'newext_ps_script'),
+                           ('submitext.ps1', 'submitext_ps_script')):
         packed = base64.b64encode(gzip.compress(
             without_comments((ROOT / 'runtime/windows' / script).read_text(encoding='utf-8')).encode(),
             mtime=0)).decode('ascii')

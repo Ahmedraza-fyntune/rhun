@@ -14,9 +14,10 @@ job() {
 echo '.section .rodata'
 emit commit_ai_script runtime/ai/commit.sh
 # background jobs on Linux and macOS (Windows has runtime/windows/*.ps1): downloads and archives
-# (runtime/jobs/archive.sh) shared by Install from GitHub and New Extension
+# (runtime/jobs/archive.sh) shared by Install from GitHub, New Extension and Submit to Index
 job install_script runtime/jobs/archive.sh runtime/jobs/extinstall.sh
 job newext_script runtime/jobs/archive.sh runtime/jobs/newext.sh
+job submitext_script runtime/jobs/archive.sh runtime/jobs/submitext.sh
 # one font for the interface and the code
 emit font_mono assets/fonts/IosevkaFixed-Regular.ttf
 printf '.globl font_ui, font_ui_end\n.set font_ui, font_mono\n.set font_ui_end, font_mono_end\n' 

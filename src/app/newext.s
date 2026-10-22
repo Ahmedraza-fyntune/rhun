@@ -62,11 +62,15 @@
 
 .bss
 .p2align 3
+.globl ne_name
 ne_name: .zero 128
 ne_owner: .zero 128
+.globl ne_dir
 ne_dir: .zero 4096
 ne_cwd: .zero 4096
+.globl ne_line
 ne_line: .zero 4096             # a line typed at a Windows prompt
+.globl ne_sb
 ne_sb: .zero SB_SIZE            # scratch
 ne_argv: .zero 16 * 8
 ne_tty: .zero NT_SIZE           # the terminal as it was
@@ -80,6 +84,7 @@ ne_yes: .long 0
 # the GUI
 ne_evq: .zero SB_SIZE           # quick input events kept for newext_tick: 8 bytes length, the bytes
 ne_evcur: .zero SB_SIZE
+.globl ne_body
 ne_body: .zero SB_SIZE          # a step's body
 ne_out: .zero SB_SIZE           # the job's output
 ne_tmp: .zero 4096              # the job's folder beside DIR ("tmp PATH")
@@ -88,8 +93,10 @@ ne_why: .zero 1024              # why it failed ("fail WHY")
 ne_title: .zero 256
 ne_cnt: .quad 0
 .ifdef WINDOWS
-ne_envbuf: .zero 16384
-ne_envlist: .zero 10 * 8
+ne_envbuf: .zero 32768
+ne_envlist: .zero 16 * 8
+ne_envn: .quad 0
+ne_envcur: .quad 0
 ne_envp: .quad 0
 ne_shell: .quad 0
 .endif
@@ -102,6 +109,11 @@ ne_pg: .long 0                  # the progress' id
 ne_cancelled: .long 0
 
 .data
+.p2align 3
+.globl ne_prefix, ne_usage, ne_abort_fn
+ne_prefix: .quad .Lprefix       # the command's name for its messages, and its usage line
+ne_usage: .quad .Lusage
+ne_abort_fn: .quad 0            # called before an abort exits (a command's temporary folder)
 ne_skills: .long -1             # -1 not chosen, 0 no, 1 yes
 ne_fd: .long -1
 
@@ -138,7 +150,7 @@ ne_name_ok:
 9:  ret
 
 # ne_owner_ok(cstr) -> rax 0, or why it is no GitHub owner ([A-Za-z0-9][A-Za-z0-9-]*, at most 39)
-ne_owner_ok:
+FN ne_owner_ok
     lea rax, [rip + .Le_owner_empty]
     cmp byte ptr [rdi], 0
     je 9f
@@ -167,7 +179,7 @@ ne_owner_ok:
 9:  ret
 
 # ne_copy(dst, src, max): src cut at max bytes, NUL-terminated
-ne_copy:
+FN ne_copy
     xor ecx, ecx
 1:  cmp ecx, edx
     jae 2f
@@ -182,7 +194,7 @@ ne_copy:
 
 # ne_git_owner(dst): git's github.user ([github] user in $XDG_CONFIG_HOME/git/config or
 #   ~/.config/git/config, then ~/.gitconfig, which wins), or "" (read, not asked of git: no process)
-ne_git_owner:
+FN ne_git_owner
     PROLOGUE 16
     mov rbx, rdi
     mov byte ptr [rbx], 0
@@ -312,8 +324,7 @@ ne_job:
     mov r12, rdi
 .ifdef WINDOWS
     # PowerShell runs runtime/windows/newext.ps1 (newext_ps_script), the inputs in RHUN_NE_*
-    mov qword ptr [rip + ne_cnt], 0
-    lea rbx, [rip + ne_envbuf]
+    call ne_env_reset
     lea rdi, [rip + .Lne_name]
     lea rsi, [rip + ne_name]
     call ne_env
@@ -338,41 +349,8 @@ ne_job:
     lea rdi, [rip + .Lne_ui]
     mov rsi, r12
     call ne_env
-    mov rcx, [rip + ne_cnt]
-    lea rax, [rip + ne_envlist]
-    mov qword ptr [rax + rcx*8], 0
-    mov rdi, [rip + ne_envp]
-    call mem_free
-    lea rdi, [rip + ne_envlist]
-    call env_make
-    mov [rip + ne_envp], rax
-    mov rdi, [rip + ne_shell]
-    call mem_free
-    lea rdi, [rip + .Lps]
-    call proc_which
-    mov [rip + ne_shell], rax
-    test rax, rax
-    jz 8f
-    lea rcx, [rip + ne_argv]
-    mov [rcx], rax
-    lea rax, [rip + .Lps_noprofile]
-    mov [rcx + 8], rax
-    lea rax, [rip + .Lps_nonint]
-    mov [rcx + 16], rax
-    lea rax, [rip + .Lps_format]
-    mov [rcx + 24], rax
-    lea rax, [rip + .Lps_text]
-    mov [rcx + 32], rax
-    lea rax, [rip + .Lps_encoded]
-    mov [rcx + 40], rax
-    lea rax, [rip + newext_ps_script]
-    mov [rcx + 48], rax
-    mov qword ptr [rcx + 56], 0
-    mov rax, rcx
-    mov rdx, [rip + ne_envp]
-    EPILOGUE
-8:  xor eax, eax
-    xor edx, edx
+    lea rdi, [rip + newext_ps_script]
+    call ne_ps_job
     EPILOGUE
 .else
     # sh -c SCRIPT rhun-new-extension NAME OWNER LANG SKILLS DIR BASE UI
@@ -405,21 +383,69 @@ ne_job:
 .endif
 
 .ifdef WINDOWS
-# ne_env("NAME=", value): one more "NAME=value" at rbx in ne_envbuf, listed in ne_envlist
-ne_env:
+# FN ne_env_reset(), FN ne_env("NAME=", value), FN ne_ps_job(script) -> rax argv, rdx envp (rax 0:
+#   no PowerShell): a PowerShell job's inputs as variables, then powershell.exe -EncodedCommand
+FN ne_env_reset
+    mov qword ptr [rip + ne_envn], 0
+    lea rax, [rip + ne_envbuf]
+    mov [rip + ne_envcur], rax
+    ret
+FN ne_env
     PROLOGUE
     mov r12, rsi
-    mov rcx, [rip + ne_cnt]
+    mov rbx, [rip + ne_envcur]
+    mov rcx, [rip + ne_envn]
+    cmp rcx, 14
+    jae 9f
     lea rax, [rip + ne_envlist]
     mov [rax + rcx*8], rbx
-    inc qword ptr [rip + ne_cnt]
+    inc qword ptr [rip + ne_envn]
     mov rsi, rdi
     mov rdi, rbx
     call cstr_copy
     mov rdi, rax
     mov rsi, r12
     call cstr_copy
-    lea rbx, [rax + 1]
+    inc rax
+    mov [rip + ne_envcur], rax
+9:  EPILOGUE
+FN ne_ps_job
+    PROLOGUE
+    mov r12, rdi
+    mov rcx, [rip + ne_envn]
+    lea rax, [rip + ne_envlist]
+    mov qword ptr [rax + rcx*8], 0
+    mov rdi, [rip + ne_envp]
+    call mem_free
+    lea rdi, [rip + ne_envlist]
+    call env_make
+    mov [rip + ne_envp], rax
+    mov rdi, [rip + ne_shell]
+    call mem_free
+    lea rdi, [rip + .Lps]
+    call proc_which
+    mov [rip + ne_shell], rax
+    test rax, rax
+    jz 8f
+    lea rcx, [rip + ne_argv]
+    mov [rcx], rax
+    lea rax, [rip + .Lps_noprofile]
+    mov [rcx + 8], rax
+    lea rax, [rip + .Lps_nonint]
+    mov [rcx + 16], rax
+    lea rax, [rip + .Lps_format]
+    mov [rcx + 24], rax
+    lea rax, [rip + .Lps_text]
+    mov [rcx + 32], rax
+    lea rax, [rip + .Lps_encoded]
+    mov [rcx + 40], rax
+    mov [rcx + 48], r12
+    mov qword ptr [rcx + 56], 0
+    mov rax, rcx
+    mov rdx, [rip + ne_envp]
+    EPILOGUE
+8:  xor eax, eax
+    xor edx, edx
     EPILOGUE
 .endif
 
@@ -457,7 +483,7 @@ ne_count_one:
     ret
 
 # ne_absolute(path) -> eax 1 when it does not depend on the current folder
-ne_absolute:
+FN ne_absolute
 .ifdef WINDOWS
     sub rsp, 8
     call path_rootlen
@@ -655,6 +681,8 @@ FN newext_main
     jne 5f
     lea rdi, [rip + .Lq_lang]
     lea rsi, [rip + .Lc_lang]
+    mov edx, 2
+    xor ecx, ecx
     call ne_ask_choice
     inc eax
     mov [rip + ne_lang], eax
@@ -662,6 +690,8 @@ FN newext_main
     jne 6f
     lea rdi, [rip + .Lq_skills]
     lea rsi, [rip + .Lc_skills]
+    mov edx, 2
+    xor ecx, ecx
     call ne_ask_choice
     xor ecx, ecx
     test eax, eax
@@ -739,7 +769,7 @@ FN newext_main
 7:  call sys_exit
 
 # ne_dir_absolute(): ne_dir from the top: under the current folder unless it is already
-ne_dir_absolute:
+FN ne_dir_absolute
     sub rsp, 8
     lea rdi, [rip + ne_dir]
     call ne_absolute
@@ -789,7 +819,7 @@ ne_trim_seps:
 9:  ret
 
 # ne_put(fd, cstr)
-ne_put:
+FN ne_put
     PROLOGUE
     mov ebx, edi
     mov r12, rsi
@@ -802,11 +832,16 @@ ne_put:
     EPILOGUE
 
 # ne_fail(why cstr): "rhun new-extension: WHY" on the error output, exit 2
-ne_fail:
+FN ne_fail
     push rdi
     call ne_raw_end
+    mov rax, [rip + ne_abort_fn]
+    test rax, rax
+    jz 1f
+    call rax
+1:
     mov edi, 2
-    lea rsi, [rip + .Lprefix]
+    mov rsi, [rip + ne_prefix]
     call ne_put
     pop rsi
     mov edi, 2
@@ -818,11 +853,11 @@ ne_fail:
     call sys_exit
 
 # ne_fail_usage(why cstr): as ne_fail, then the usage line
-ne_fail_usage:
+FN ne_fail_usage
     push rdi
     call ne_raw_end
     mov edi, 2
-    lea rsi, [rip + .Lprefix]
+    mov rsi, [rip + ne_prefix]
     call ne_put
     pop rsi
     mov edi, 2
@@ -831,13 +866,13 @@ ne_fail_usage:
     lea rsi, [rip + .Lnl]
     call ne_put
     mov edi, 2
-    lea rsi, [rip + .Lusage]
+    mov rsi, [rip + ne_usage]
     call ne_put
     mov edi, 2
     call sys_exit
 
 # ne_isatty(fd) -> eax 1 for a terminal (Windows: a console)
-ne_isatty:
+FN ne_isatty
 .ifdef WINDOWS
     jmp win_console_is
 .else
@@ -854,7 +889,7 @@ ne_isatty:
 
 # ne_raw_begin(): the terminal gives each key at once, without echo or signals (Ctrl+C is a key
 #   here, after which ne_raw_end puts it back); Windows keeps its line editing
-ne_raw_begin:
+FN ne_raw_begin
 .ifdef WINDOWS
     ret
 .else
@@ -886,7 +921,7 @@ ne_raw_begin:
 .endif
 
 # ne_raw_end(): the terminal as it was
-ne_raw_end:
+FN ne_raw_end
     cmp dword ptr [rip + ne_raw_on], 0
     je 9f
     sub rsp, 8
@@ -899,8 +934,13 @@ ne_raw_end:
 9:  ret
 
 # ne_abort(): Ctrl+C or the input's end at a question: the terminal back, exit 130
-ne_abort:
+FN ne_abort
     call ne_raw_end
+    mov rax, [rip + ne_abort_fn]
+    test rax, rax
+    jz 1f
+    call rax
+1:
     mov edi, 1
     lea rsi, [rip + .Lnl]
     call ne_put
@@ -909,7 +949,7 @@ ne_abort:
 
 # ne_key() -> eax the next key: a character, K_ENTER, K_BS, K_CTRLC, K_CTRLD, K_UP, K_DOWN, K_ESC,
 #   K_NONE for keys the questions do not use, K_EOF
-ne_key:
+FN ne_key
     PROLOGUE
 1:  mov ecx, [rip + ne_klen]
     test ecx, ecx
@@ -980,7 +1020,7 @@ ne_key:
 
 # ne_ask_text(label cstr, buf (its default), max, check fn(cstr) -> 0 or why): "Label: text" until
 #   the check takes it; raw: typed and erased in place, Windows: a line (empty keeps the default)
-ne_ask_text:
+FN ne_ask_text
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
@@ -1081,28 +1121,47 @@ ne_ask_text:
     jmp .Lat_prompt
 9:  EPILOGUE
 
-# ne_ask_choice(label cstr, items: two cstrs) -> eax 0 or 1: raw: the items under the label, Up and
-#   Down (or 1 and 2) choose, Enter takes it, then "Label: Item" stays; Windows: "Label (1 A, 2 B) [1]: "
-ne_ask_choice:
+# FN ne_ask_choice(label cstr, items cstr array, n (at most 9), default) -> eax the item chosen:
+#   raw: the items under the label, Up and Down (or a digit) choose, Enter takes it, then
+#   "Label: Item" stays; Windows: "Label (1 A, 2 B, ...) [N]: " takes a digit or a first letter
+FN ne_ask_choice
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
-    xor r13d, r13d              # the item chosen
+    mov r15d, edx               # n
+    mov r13d, ecx               # the item chosen
 .ifdef WINDOWS
 1:  mov edi, 1
     mov rsi, rbx
     call ne_put
+    xor r14d, r14d
+2:  mov edi, 1
+    lea rsi, [rip + .Lw_sep]
+    test r14d, r14d
+    jnz 3f
+    lea rsi, [rip + .Lw_open]
+3:  call ne_put
+    lea eax, [r14 + '1']
+    mov [rsp], al
+    mov byte ptr [rsp + 1], ' '
+    mov byte ptr [rsp + 2], 0
     mov edi, 1
-    lea rsi, [rip + .Lw_one]
+    lea rsi, [rsp]
     call ne_put
     mov edi, 1
-    mov rsi, [r12]
+    mov rsi, [r12 + r14*8]
+    call ne_put
+    inc r14d
+    cmp r14d, r15d
+    jb 2b
+    lea eax, [r13 + '1']
+    mov [rsp], al
+    mov byte ptr [rsp + 1], 0
+    mov edi, 1
+    lea rsi, [rip + .Lw_close]
     call ne_put
     mov edi, 1
-    lea rsi, [rip + .Lw_two]
-    call ne_put
-    mov edi, 1
-    mov rsi, [r12 + 8]
+    lea rsi, [rsp]
     call ne_put
     mov edi, 1
     lea rsi, [rip + .Lw_end]
@@ -1113,24 +1172,24 @@ ne_ask_choice:
     movzx eax, byte ptr [rip + ne_line]
     test eax, eax
     jz 9f
-    cmp eax, '1'
-    je 9f
-    mov r13d, 1
-    cmp eax, '2'
-    je 9f
-    # the item's first letter, either case
+    lea ecx, [rax - '1']
+    cmp ecx, r15d
+    jae 4f
+    mov r13d, ecx
+    jmp 9f
+4:  # the first item with that first letter, either case
     or eax, 0x20
-    mov rcx, [r12 + 8]
+    xor r14d, r14d
+5:  mov rcx, [r12 + r14*8]
     movzx ecx, byte ptr [rcx]
     or ecx, 0x20
     cmp eax, ecx
-    je 9f
-    xor r13d, r13d
-    mov rcx, [r12]
-    movzx ecx, byte ptr [rcx]
-    or ecx, 0x20
-    cmp eax, ecx
-    je 9f
+    jne 6f
+    mov r13d, r14d
+    jmp 9f
+6:  inc r14d
+    cmp r14d, r15d
+    jb 5b
     jmp 1b
 9:  mov eax, r13d
     EPILOGUE
@@ -1152,30 +1211,33 @@ ne_ask_choice:
     cmp eax, K_EOF
     je ne_abort
     cmp eax, K_UP
-    je 3f
-    cmp eax, K_DOWN
-    je 3f
-    cmp eax, '1'
+    jne 3f
+    dec r13d
+    jns 5f
+    lea r13d, [r15 - 1]
+    jmp 5f
+3:  cmp eax, K_DOWN
     jne 4f
+    inc r13d
+    cmp r13d, r15d
+    jb 5f
     xor r13d, r13d
     jmp 5f
-4:  cmp eax, '2'
-    jne 2b
-    mov r13d, 1
-    jmp 5f
-3:  xor r13d, 1                 # two items: up and down both move to the other one
-    mov edi, 1
-    lea rsi, [rip + .Lup2]
-    call ne_put
+4:  lea ecx, [rax - '1']
+    cmp ecx, r15d
+    jae 2b
+    mov r13d, ecx
+    call ne_choice_up
+    call ne_choice_lines
+    jmp 6f
+5:  call ne_choice_up
     call ne_choice_lines
     jmp 2b
-5:  mov edi, 1
-    lea rsi, [rip + .Lup2]
-    call ne_put
-    call ne_choice_lines
 6:  # the list folds into "Label: Item"
+    lea edi, [r15 + 1]
+    call ne_cursor_up
     mov edi, 1
-    lea rsi, [rip + .Lup3]
+    lea rsi, [rip + .Lclear_down]
     call ne_put
     mov edi, 1
     mov rsi, rbx
@@ -1192,8 +1254,30 @@ ne_ask_choice:
     mov eax, r13d
     EPILOGUE
 
-# ne_choice_lines(): the two items of ne_ask_choice (rbx label, r12 items, r13 chosen), each on a
-#   cleared line, the chosen one marked
+# ne_choice_up(): back to the first item's line (r15 items)
+ne_choice_up:
+    mov edi, r15d
+    jmp ne_cursor_up
+
+# ne_cursor_up(n): ESC [ n A
+ne_cursor_up:
+    PROLOGUE 16
+    mov ebx, edi
+    mov edi, 1
+    lea rsi, [rip + .Lcsi]
+    call ne_put
+    lea rdi, [rsp]
+    mov esi, ebx
+    call fmt_u64
+    mov byte ptr [rsp + rax], 'A'
+    mov byte ptr [rsp + rax + 1], 0
+    mov edi, 1
+    lea rsi, [rsp]
+    call ne_put
+    EPILOGUE
+
+# ne_choice_lines(): the items of ne_ask_choice (r12 items, r13 chosen, r15 n), each on a cleared
+#   line, the chosen one marked
 ne_choice_lines:
     PROLOGUE
     xor r14d, r14d
@@ -1210,7 +1294,7 @@ ne_choice_lines:
     lea rsi, [rip + .Lmark_end]
     call ne_put
     inc r14d
-    cmp r14d, 2
+    cmp r14d, r15d
     jb 1b
     EPILOGUE
 .endif
@@ -1585,7 +1669,7 @@ ne_accept:
     EPILOGUE
 
 # ne_expand_home(dst, src): src with a leading ~ (alone or before a separator) as the home
-ne_expand_home:
+FN ne_expand_home
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
@@ -1636,7 +1720,7 @@ ne_show:
     EPILOGUE
 
 # ne_rec_data(cstr): "LEN" LF and the bytes onto ne_body (a record's end)
-ne_rec_data:
+FN ne_rec_data
     PROLOGUE
     mov rbx, rdi
     call strlen
@@ -1654,7 +1738,7 @@ ne_rec_data:
     EPILOGUE
 
 # ne_rec(head cstr, data cstr): "HEAD LEN" LF DATA onto ne_body (head ends in its space)
-ne_rec:
+FN ne_rec
     PROLOGUE
     mov rbx, rsi
     mov rsi, rdi
@@ -1666,7 +1750,7 @@ ne_rec:
 
 # ne_item(id cstr, label cstr, desc cstr) onto ne_body: "ID_LEN LABEL_LEN EXTRA_LEN item" LF ID LABEL
 #   and the extra, "desc LEN" LF DESC
-ne_item:
+FN ne_item
     PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
@@ -1818,6 +1902,7 @@ ne_step_body:
     lea rdx, [rip + .Ld_go]
     call ne_item
     mov rdi, [rsp]
+    mov esi, 2
     call ne_items_head
     call ne_lang_word
     jmp .Lsb_active
@@ -1842,6 +1927,7 @@ ne_step_body:
     lea rdx, [rip + .Ld_no]
     call ne_item
     mov rdi, [rsp]
+    mov esi, 2
     call ne_items_head
     call ne_skills_word
 .Lsb_active:
@@ -1866,18 +1952,25 @@ ne_step_body:
     call ne_rec_data
     EPILOGUE
 
-# ne_items_head(start): the item records from offset start in ne_body get their "items 2 LEN" LF
-#   in front
-ne_items_head:
+# ne_items_head(start, n): the n item records from offset start in ne_body get their
+#   "items N LEN" LF in front
+FN ne_items_head
     PROLOGUE 16
     mov r12, rdi
+    mov r15d, esi
     mov r13, [rip + ne_body + SB_len]
     sub r13, r12                # their length
     lea rdi, [rip + ne_sb]
     call sb_clear
     lea rdi, [rip + ne_sb]
-    lea rsi, [rip + .Lr_items2]
+    lea rsi, [rip + .Lr_items]
     call sb_push_cstr
+    lea rdi, [rip + ne_sb]
+    mov esi, r15d
+    call sb_push_u64
+    lea rdi, [rip + ne_sb]
+    mov esi, ' '
+    call sb_push_byte
     lea rdi, [rip + ne_sb]
     mov rsi, r13
     call sb_push_u64
@@ -2014,9 +2107,18 @@ ne_on_job:
 
 # ne_lines(): the whole lines in ne_out: "tmp PATH", "step N M TEXT", "ok DIR", "fail WHY"
 ne_lines:
-    PROLOGUE
-1:  mov rbx, [rip + ne_out + SB_ptr]
-    mov r12, [rip + ne_out + SB_len]
+    lea rdi, [rip + ne_out]
+    lea rsi, [rip + ne_line_one]
+    jmp ne_take_lines
+
+# FN ne_take_lines(sb, fn(cstr)): each whole line in sb leaves it and goes to fn, without its CR LF
+#   (in ne_line, at most 4000 bytes)
+FN ne_take_lines
+    PROLOGUE 16
+    mov r15, rdi
+    mov [rsp], rsi
+1:  mov rbx, [r15 + SB_ptr]
+    mov r12, [r15 + SB_len]
     xor r13d, r13d
 2:  cmp r13, r12
     jae 9f
@@ -2046,11 +2148,60 @@ ne_lines:
     mov rdx, r12
     sub rdx, r13
     dec rdx
-    mov [rip + ne_out + SB_len], rdx
+    mov [r15 + SB_len], rdx
     call memmove
-    call ne_line_one
+    lea rdi, [rip + ne_line]
+    call [rsp]
     jmp 1b
 9:  EPILOGUE
+
+# FN ne_run_lines(argv, envp, sb, fn(cstr)) -> eax the program's exit status (-1: it did not start):
+#   it runs to its end, each line of its output to fn as it comes (rhun waits: the terminal commands)
+FN ne_run_lines
+    PROLOGUE 32
+    mov r14, rdx
+    mov r15, rcx
+    xor edx, edx
+    call run_piped
+    test rax, rax
+    jle 8f
+    mov r12d, eax
+    mov r13d, edx
+    mov rdi, r14
+    call sb_clear
+1:  mov rdi, r14
+    mov esi, 4096
+    call sb_reserve
+    mov rsi, rax
+    mov edi, r13d
+    mov edx, 4096
+    SYS SYS_read
+    cmp rax, -EINTR
+    je 1b
+    cmp rax, -EAGAIN
+    jne 2f
+    mov [rsp], r13d             # struct pollfd: fd, POLLIN
+    mov dword ptr [rsp + 4], POLLIN
+    lea rdi, [rsp]
+    mov esi, 1
+    mov edx, -1
+    SYS SYS_poll
+    jmp 1b
+2:  test rax, rax
+    jle 3f
+    add [r14 + SB_len], rax
+    mov rdi, r14
+    mov rsi, r15
+    call ne_take_lines
+    jmp 1b
+3:  mov edi, r13d
+    SYS SYS_close
+    mov edi, r12d
+    xor esi, esi
+    call proc_wait
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
 
 # ne_line_one(): ne_line, one line of the job
 ne_line_one:
@@ -2134,7 +2285,7 @@ ne_line_one:
 9:  EPILOGUE
 
 # ne_starts(cstr, prefix cstr) -> eax 1 when it starts with prefix
-ne_starts:
+FN ne_starts
     xor ecx, ecx
 1:  movzx eax, byte ptr [rsi + rcx]
     test eax, eax
@@ -2344,7 +2495,7 @@ c_wait_new_extension:
     EPILOGUE
 
 # ne_flush(): the frame, as control.s's commands end with one (headless and Windows draw at once)
-ne_flush:
+FN ne_flush
 .ifndef WINDOWS
     cmp dword ptr [rip + g_headless], 0
     je 1f
@@ -2391,14 +2542,15 @@ ne_flush:
 .Lerase: .asciz "\b \b"
 .Lopen_br: .asciz " ["
 .Lclose_br: .asciz "]"
-.Lw_one: .asciz " (1 "
-.Lw_two: .asciz ", 2 "
-.Lw_end: .asciz ") [1]: "
+.Lw_open: .asciz " ("
+.Lw_sep: .asciz ", "
+.Lw_close: .asciz ") ["
+.Lw_end: .asciz "]: "
+.Lcsi: .asciz "\r\033["
+.Lclear_down: .asciz "\r\033[J"
 .Lmark_on: .asciz "\r\033[K  \033[1m> "
 .Lmark_off: .asciz "\r\033[K    "
 .Lmark_end: .asciz "\033[0m\n"
-.Lup2: .asciz "\033[2A"
-.Lup3: .asciz "\033[3A\r\033[J"
 .Lq_name: .asciz "Name"
 .Lq_owner: .asciz "Owner (GitHub user or organization)"
 .Lq_lang: .asciz "Language"
@@ -2464,7 +2616,7 @@ ne_flush:
 .Lr_mode_input: .asciz "mode input 0\n"
 .Lr_mode_pick: .asciz "mode pick 0\n"
 .Lr_items_none: .asciz "items 0 0\n"
-.Lr_items2: .asciz "items 2 "
+.Lr_items: .asciz "items "
 .Lr_item: .asciz " item\n"
 .Lr_desc: .asciz "desc "
 .Lr_prompt: .asciz "prompt "
