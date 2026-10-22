@@ -154,6 +154,15 @@ class Items(lang.Lang):
         out = self.run_items(self.spec(items, hello='hello 1 complete'), ['cmd complete', 'wait 300', 'print-complete'])
         self.assertTrue(any('sel=0 labels=print|process' in l for l in out), out)
 
+    def test_a_v1_provider_prints_v1s_two_lines(self):
+        items = body(item('print', 'print'), item('process', 'process'))
+        out = self.run_items(self.spec(items, hello='hello 1 complete'), ['cmd complete', 'wait 300', 'echo ===',
+                                                                         'print-complete', 'echo ==='])
+        i = out.index('===')
+        lines = out[i + 1:out.index('===', i + 1)]
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(lines[0].startswith('complete open=2 ') and lines[1].startswith('signature '), lines)
+
     def test_signature_overloads_switch_with_up_and_down(self):
         sigs = [('add(a: i32)', 'One.', (4, 10)), ('add(a: i32, b: i32)', 'Two.', (4, 10)), ('add()', '', (-1, -1))]
         recs = ''.join(f'{f} {t} {len(sig)} {len(doc)}\n{sig}{doc}' for sig, doc, (f, t) in sigs)
