@@ -2124,6 +2124,10 @@ F EXT_mgmt_pad, 4
 # remote hosts (remoteext.s)
 F EXT_where_local, 4    # 1: where = local: in a remote window it runs on this machine
 F EXT_remote_wait, 4    # 1: its Linux build is being fetched; it starts when it is here
+# data extensions (ext.s)
+F EXT_prog_wanted, 4    # the manifest names a program (run, run.TARGET for any target, runtime) or
+                        # what only one can do ([commands], [provides])
+F EXT_data, 4           # 1: a data extension: none of those and no pack; its data files load, it never starts
 ENDSTRUCT EXT_SIZE
 
 # an extension's view (extview.s)

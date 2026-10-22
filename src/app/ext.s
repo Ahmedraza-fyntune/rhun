@@ -1926,7 +1926,18 @@ FN ext_load
     jz 51f
     mov rdi, rax
     jmp .Lel_fail
-51: mov rdi, rbx                # remote hosts: where = local may not need the project or home
+51: # data extensions: a manifest naming no program, no [commands], no [provides] and no pack is
+    # data (themes, grammars, icon themes, [language.NAME] keys, [keys]): its files load and it
+    # never starts
+    cmp dword ptr [rbx + EXT_prog_wanted], 0
+    jne .Lel_program
+    cmp qword ptr [rbx + EXT_pack], 0
+    jne .Lel_program
+    mov dword ptr [rbx + EXT_data], 1
+    mov dword ptr [rbx + EXT_manifest_ok], 1
+    jmp 83f
+.Lel_program:
+    mov rdi, rbx                # remote hosts: where = local may not need the project or home
     call remote_ext_check
     test rax, rax
     jz .Lel_where_ok
@@ -2073,6 +2084,30 @@ manifest_kv:
     cmp qword ptr [r12 + INI_seclen], 0
     jne .Lmk_sections
     # top level
+    # data extensions: run, runtime and run.TARGET for any target mean a program (a manifest
+    # without one, [commands], [provides] or a pack is a data extension)
+    mov rax, [r12 + INI_key]
+    mov rcx, [r12 + INI_keylen]
+    cmp rcx, 3
+    jb .Lmk_not_run
+    cmp byte ptr [rax], 'r'
+    jne .Lmk_not_run
+    cmp byte ptr [rax + 1], 'u'
+    jne .Lmk_not_run
+    cmp byte ptr [rax + 2], 'n'
+    jne .Lmk_not_run
+    cmp rcx, 3
+    je .Lmk_run_seen
+    cmp byte ptr [rax + 3], '.'
+    je .Lmk_run_seen
+    mov rdi, r12
+    lea rsi, [rip + .Lk_runtime]
+    call ini_key_is
+    test eax, eax
+    jz .Lmk_not_run
+.Lmk_run_seen:
+    mov dword ptr [rbx + EXT_prog_wanted], 1
+.Lmk_not_run:
     mov rdi, r12
     lea rsi, [rip + .Lk_title]
     call ini_key_is
@@ -2240,6 +2275,7 @@ manifest_kv:
     call ini_sec_is
     test eax, eax
     jz 1f
+    mov dword ptr [rbx + EXT_prog_wanted], 1    # commands need a program to run them
     mov rdi, rbx
     mov rsi, r12
     call ext_cmd_add
@@ -2270,6 +2306,7 @@ manifest_kv:
     call ini_sec_is
     test eax, eax
     jz 5f
+    mov dword ptr [rbx + EXT_prog_wanted], 1    # and so do the language features it answers
     mov rdi, rbx                # AI: agents, agents.title (agentext.s)
     mov rsi, r12
     call agentext_manifest_kv
@@ -3087,15 +3124,11 @@ FN ext_start
     call ext_is_visible
     test eax, eax
     jz 8f
-    cmp qword ptr [rbx + EXT_prog], 0
-    jne 6f
-    cmp qword ptr [rbx + EXT_pack], 0
-    jne 7f                      # extension management: a pack without a program never starts
-    mov rdi, rbx                # debugger: nor does one that only declares debuggers
-    call dbg_ext_declares
+    mov rdi, rbx
+    call ext_never_starts
     test eax, eax
     jnz 7f
-6:  cmp qword ptr [rip + ext_pending_shutting_down], 0
+    cmp qword ptr [rip + ext_pending_shutting_down], 0
     jne 7f
     mov rdi, rbx
     call ext_spawn
@@ -3110,6 +3143,21 @@ FN ext_start
     EPILOGUE
 8:  mov rax, -116
     EPILOGUE
+
+# ext_never_starts(ext) -> eax 1 for an extension without a process of its own: without a program,
+#   a pack (extension management), a data extension, or one that only declares debuggers
+#   (debugger); clobbers rax, rcx, rdx only
+FN ext_never_starts
+    xor eax, eax
+    cmp qword ptr [rdi + EXT_prog], 0
+    jne 9f
+    inc eax
+    cmp qword ptr [rdi + EXT_pack], 0
+    jne 9f
+    cmp dword ptr [rdi + EXT_data], 0
+    jne 9f
+    jmp dbg_ext_declares
+9:  ret
 
 ext_spawn:
     PROLOGUE 32
