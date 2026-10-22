@@ -18,7 +18,8 @@
 .equ SP_TSLOT, 224              # an action's inline key (16 bytes) and title (208) in SP_tblob
 .equ SP_INLINE_MAX, 4           # inline buttons on a row
 .equ SP_INPUT_MAX, 65536        # the message box's text
-.equ ID_SP, 0x5f0000            # + slot * 16 + n: a provider's buttons; + 15 its message box
+.equ ID_SP, 0x7a0000            # + slot * 16 + n: a provider's buttons and header buttons (0x5f0000 is views')
+.equ ID_SPBOX, 0x7a8000         # + its handle: a provider's message box
 
 # a provider
 STRUCT
@@ -253,8 +254,11 @@ FN scmext_h_register
     mov ecx, SP_SIZE
     div ecx
     mov [rsp + 24], eax         # the slot
-    shl eax, 4
-    add eax, ID_SP + 15
+    # the message box's id is the registration's (a later provider in this slot gets another, so a
+    # paste captured for this one never lands in it)
+    mov eax, [r15 + SP_handle]
+    and eax, 0x7fff
+    add eax, ID_SPBOX
     mov [r15 + SP_tf + TF_id], eax
     # its section, named OWNER/NAME.scm.N in the config
     lea rdi, [rip + tmp]
@@ -2467,6 +2471,8 @@ open_base_diff:
     call dtab_note
 7:  mov eax, 1
     EPILOGUE
+8:  xor eax, eax                # no changes (or a path too long): the caller opens the file
+    EPILOGUE
 
 # tab_of_doc_id(id) -> eax the tab showing that document, or -1
 tab_of_doc_id:
@@ -2521,8 +2527,6 @@ dtab_note:
     mov [rax + 8], r13
     mov [rax + 16], r15
     inc qword ptr [rip + dtab_n]
-    EPILOGUE
-8:  xor eax, eax
     EPILOGUE
 
 # FN scmpanel_base_ready(doc): a quick-diff base came for the document (or none did, scmext.s): a click
@@ -3028,6 +3032,17 @@ FN scmpanel_find
     ret
 8:  xor eax, eax
     ret
+
+# FN scmpanel_box_id(handle) -> eax its message box's widget id, or -1 (print-scm-box)
+FN scmpanel_box_id
+    PROLOGUE
+    call scmpanel_find
+    test rax, rax
+    jz 8f
+    mov eax, [rax + SP_tf + TF_id]
+    EPILOGUE
+8:  mov eax, -1
+    EPILOGUE
 
 # FN scmpanel_status_has(handle, ptr, len) -> eax 1 when that provider has sent an update whose status
 #   line holds the text (any update for an empty text)
