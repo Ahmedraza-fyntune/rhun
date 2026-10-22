@@ -157,6 +157,13 @@ def lldb_dap():
     return None
 
 
+# Ubuntu's lldb-dap asks https://debuginfod.ubuntu.com (its default server-urls, DEBUGINFOD_URLS or
+#   not) for the debug info of the libraries the program loads, and answers launch only after: 90 s,
+#   the debuginfod timeout, on the GitHub runners. The tests turn the lookups off
+NO_DEBUGINFOD = ('' if sys.platform == 'darwin' else
+                 'initCommands = "?settings clear plugin.symbol-locator.debuginfod.server-urls"\n')
+
+
 class Real(debughost.DebugHost):
     def run_real(self, actions, timeout=120, files=()):
         return self.run_editor(actions, files=files, exts=REAL, timeout=timeout)
@@ -172,7 +179,7 @@ class LldbDap(Real):
         self.c = self.proj / 'hello.c'
         self.c.write_text(HELLO_C, encoding='utf-8')
         subprocess.run(['cc', '-g', '-O0', '-o', str(self.proj / 'hello'), str(self.c)], check=True)
-        self.launch_ini('[Run]\ntype = c\nprogram = hello\n')
+        self.launch_ini('[Run]\ntype = c\nprogram = hello\n' + NO_DEBUGINFOD)
 
     def test_breakpoint_stack_locals_step_out_watch_and_exit(self):
         out = self.run_real(['bp %s 3' % self.c, *self.start(), 'wait-debug paused 60000', 'print-debug',
@@ -218,7 +225,7 @@ class LldbDap(Real):
         src = self.proj / 'thread.c'
         src.write_text(THREAD_C, encoding='utf-8')
         subprocess.run(['cc', '-g', '-O0', '-pthread', '-o', str(self.proj / 'thread'), str(src)], check=True)
-        self.launch_ini('[Thread]\ntype = c\nprogram = thread\n')
+        self.launch_ini('[Thread]\ntype = c\nprogram = thread\n' + NO_DEBUGINFOD)
         out = self.run_real(['bp %s 4' % src, *self.start('Thread'), 'wait-debug paused 60000', 'wait 500',
                              'print-debug', 'print-stack', 'print-vars', 'echo --', 'debug-continue',
                              'wait-debug ended 30000', 'print-debug'], files=('thread.c',))
@@ -238,7 +245,7 @@ class LldbDap(Real):
         spin = self.proj / ('spin-%d' % os.getpid())
         (self.proj / 'spin.c').write_text(SPIN_C, encoding='utf-8')
         subprocess.run(['cc', '-g', '-O0', '-o', str(spin), str(self.proj / 'spin.c')], check=True)
-        self.launch_ini('[Spin]\ntype = c\nprogram = %s\n' % spin.name)
+        self.launch_ini('[Spin]\ntype = c\nprogram = %s\n' % spin.name + NO_DEBUGINFOD)
         start = time.time()
         out = self.run_real([*self.start('Spin'), 'wait-debug running 60000', 'wait 1000', 'print-debug',
                              'debug-stop', 'wait-debug ended 10000', 'print-debug'])
