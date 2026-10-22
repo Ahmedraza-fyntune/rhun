@@ -455,13 +455,8 @@ FN sx_drop_work
     cmp byte ptr [rip + sx_work], 0
     je 9f
     lea rdi, [rip + sx_work]
-    call strlen
-    lea rdi, [rip + sx_work]
-    mov rsi, rax
-    call path_basename
-    mov rdi, rax
     lea rsi, [rip + .Lwork_prefix]
-    call ne_starts
+    call ne_name_starts
     test eax, eax
     jz 8f
     lea rdi, [rip + sx_work]

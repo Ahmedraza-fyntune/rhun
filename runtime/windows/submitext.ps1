@@ -64,7 +64,11 @@ if ($env:RHUN_SX_STEP -eq 'prepare') {
         if ($f.Count -ne 2) { continue }
         $file = $f[1].TrimStart('*')
         $digest = $f[0].ToLowerInvariant()
-        if ($file -match "^$([regex]::Escape($name))-([a-z0-9_-]+)\.tar\.gz$" -and $digest -match '^[0-9a-f]{64}$') { $targets[$Matches[1]] = $digest }
+        # the target before the digest is matched: each -match replaces $Matches
+        if ($file -cmatch "^$([regex]::Escape($name))-([a-z0-9_-]+)\.tar\.gz$") {
+            $t = $Matches[1]
+            if ($digest -cmatch '^[0-9a-f]{64}$') { $targets[$t] = $digest }
+        }
     }
     if ($targets.Count -eq 0) { Fail "the release's sha256sums.txt lists no $name-TARGET.tar.gz" }
     Step 2 3 "Reading the commit of $tag"

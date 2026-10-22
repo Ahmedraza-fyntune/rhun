@@ -3,7 +3,8 @@
 # (plain files and folders only, nothing outside itself, at most 64 MB). The inputs come in
 # RHUN_NE_NAME, RHUN_NE_OWNER, RHUN_NE_LANG (rust or go), RHUN_NE_SKILLS (yes or no), RHUN_NE_DIR,
 # RHUN_NE_BASE and RHUN_NE_UI (cli: a report for the terminal; gui: "tmp PATH", "step N M TEXT",
-# then "ok DIR" or "fail WHY"), never through the command line.
+# then "ok DIR" or "fail WHY"), never through the command line. PowerShell's names ignore case:
+# $lang and $LangName are two variables only because they are spelled apart.
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
@@ -25,7 +26,7 @@ function Fail([string]$why) {
 function Step([int]$n, [string]$text) {
     if ($ui -eq 'gui') { Write-Output "step $n $script:total $text" } else { Write-Output $text }
 }
-if ($lang -eq 'rust') { $Lang = 'Rust' } elseif ($lang -eq 'go') { $Lang = 'Go' } else { Fail "the language is rust or go, not $lang" }
+if ($lang -eq 'rust') { $LangName = 'Rust' } elseif ($lang -eq 'go') { $LangName = 'Go' } else { Fail "the language is rust or go, not $lang" }
 if ($name -cnotmatch '^[a-z0-9][a-z0-9-]*$') { Fail "the name is lowercase letters, digits and dashes: $name" }
 if ($lang -eq 'rust' -and $name -match '^[0-9]') { Fail "a Rust package name starts with a letter: $name" }
 if ($owner -notmatch '^[A-Za-z0-9][A-Za-z0-9-]*$') { Fail "the owner is a GitHub user or organization: $owner" }
@@ -88,10 +89,10 @@ function Edit([string]$file, [scriptblock]$change) {
     } catch { Fail "cannot change $file" }
 }
 
-Step 1 "Downloading the $Lang template"
+Step 1 "Downloading the $LangName template"
 $url = "$base/rhun-editor/template-$lang/tar.gz/refs/heads/main"
 $archive = Join-Path $tmp 't.tgz'
-if (-not (Fetch $url $archive)) { Fail "could not download the $Lang template ($url)" }
+if (-not (Fetch $url $archive)) { Fail "could not download the $LangName template ($url)" }
 $src = Unpack $archive (Join-Path $tmp 't') 'template'
 Remove-Item -LiteralPath $archive -Force
 if (-not (Test-Path -LiteralPath (Join-Path $src 'extension.ini') -PathType Leaf)) { Fail 'the template has no extension.ini' }
@@ -157,8 +158,13 @@ if ($skills -eq 'yes') {
 
 Step $script:total "Creating $dir"
 try {
-    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Force -ErrorAction Stop }
-    Move-Item -LiteralPath $src -Destination $dir -ErrorAction Stop
+    if (Test-Path -LiteralPath $dir) {
+        # the empty folder stays (Windows refuses to remove a process's current folder, such as
+        # rhun.com's for "rhun new-extension ."): the template's files move into it
+        Get-ChildItem -LiteralPath $src -Force | Move-Item -Destination $dir -ErrorAction Stop
+    } else {
+        Move-Item -LiteralPath $src -Destination $dir -ErrorAction Stop
+    }
 } catch { Fail "cannot create $dir" }
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 $tmp = $null
@@ -167,7 +173,7 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 }
 if ($ui -eq 'gui') { Write-Output "ok $dir"; exit 0 }
 Write-Output ''
-Write-Output "Created $owner/$name ($Lang) in $dir"
+Write-Output "Created $owner/$name ($LangName) in $dir"
 Write-Output ''
 Write-Output 'Next:'
 Write-Output "  cd $dir"

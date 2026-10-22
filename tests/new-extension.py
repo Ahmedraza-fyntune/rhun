@@ -461,8 +461,8 @@ class Gui(Base):
         self.assertIn(' step=3/5 mode=pick ', heads[2])
         self.assertIn(' step=4/5 mode=pick ', heads[3])
         self.assertIn(' step=5/5 mode=input ', heads[4])
-        home = self.home.as_posix() if not WINDOWS else str(self.home)
-        self.assertTrue(heads[4].endswith(' field=' + home + '/code/gui-ext'), heads[4])
+        # rhun's own paths use / on Windows too
+        self.assertTrue(heads[4].endswith(' field=' + self.home.as_posix() + '/code/gui-ext'), heads[4])
         rows = [l for l in out if l.startswith('row ')]
         self.assertTrue(any(' id=rust label=Rust' in r and ' active' in r for r in rows), rows)
         self.assertTrue(any(' id=go label=Go' in r for r in rows), rows)

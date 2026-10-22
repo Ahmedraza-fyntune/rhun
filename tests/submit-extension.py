@@ -134,7 +134,9 @@ class Base(unittest.TestCase):
         env.update(HOME=str(self.home), USERPROFILE=str(self.home), XDG_CONFIG_HOME=str(self.home / 'config'),
                    XDG_STATE_HOME=str(self.home / 'state'), TMPDIR=str(self.home / 'tmp'), PATH=path,
                    RHUN_EXT_BASE=self.github.as_uri(), RHUN_SUBMIT_API=self.api.as_uri(),
-                   RHUN_SUBMIT_RAW=self.raw.as_uri(), FAKE_GH_LOG=str(self.gh_log), GIT_CONFIG_NOSYSTEM='1')
+                   RHUN_SUBMIT_RAW=self.raw.as_uri(), FAKE_GH_LOG=str(self.gh_log), GIT_CONFIG_NOSYSTEM='1',
+                   # a real gh (CI runners have one) is never logged in here: no pull request is made
+                   GH_CONFIG_DIR=str(self.home / 'gh'))
         if WINDOWS:
             # ShellExecute would open a real browser: a program that is not there gets the address
             env['RHUN_SUBMIT_OPENER'] = str(self.work / 'no-browser.exe')
@@ -374,7 +376,7 @@ class Gui(Base):
                        'key Return', 'wait-submit-extension', 'print-notes', 'print-submit-entry'])
         heads = self.heads(out)
         self.assertIn(' title=Submit to Index step=1/5 mode=input ', heads[0])
-        self.assertTrue(heads[0].endswith(' field=' + str(self.ext)), heads[0])
+        self.assertTrue(heads[0].endswith(' field=' + self.ext.as_posix()), heads[0])   # / on Windows too
         self.assertIn(' step=2/5 mode=pick ', heads[1])
         self.assertIn(' step=3/5 mode=input ', heads[2])
         self.assertIn(' step=4/5 mode=input ', heads[3])

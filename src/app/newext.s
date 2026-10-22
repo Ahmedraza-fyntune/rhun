@@ -2417,6 +2417,26 @@ ne_note_failed:
     call notify_add
     EPILOGUE
 
+# FN ne_name_starts(path, prefix) -> eax 1 when the path's last part starts with prefix (on Windows
+#   after a / or a \: the PowerShell jobs' paths have \)
+FN ne_name_starts
+    mov rax, rdi
+    mov rcx, rdi
+1:  movzx edx, byte ptr [rcx]
+    test edx, edx
+    jz 3f
+    inc rcx
+    cmp edx, '/'
+.ifdef WINDOWS
+    je 2f
+    cmp edx, 92
+.endif
+    jne 1b
+2:  mov rax, rcx
+    jmp 1b
+3:  mov rdi, rax
+    jmp ne_starts
+
 # ne_drop_tmp(): the job's folder beside DIR, when one is left (a Windows job stopped by Cancel has
 #   no trap to remove it); only a .rhun-new- folder
 ne_drop_tmp:
@@ -2424,13 +2444,8 @@ ne_drop_tmp:
     cmp byte ptr [rip + ne_tmp], 0
     je 9f
     lea rdi, [rip + ne_tmp]
-    call strlen
-    lea rdi, [rip + ne_tmp]
-    mov rsi, rax
-    call path_basename
-    mov rdi, rax
     lea rsi, [rip + .Ltmp_prefix]
-    call ne_starts
+    call ne_name_starts
     test eax, eax
     jz 8f
     lea rdi, [rip + ne_tmp]

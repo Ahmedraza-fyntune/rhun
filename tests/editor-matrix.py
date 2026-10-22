@@ -12,8 +12,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
-COMMANDS = re.findall(r'^\s+COMMAND (\w+), "([^"]+)"',
-                      (ROOT / 'src/app/keys.s').read_text(encoding='utf-8'), re.M)
+# titles as the assembler reads them: an escape such as \342\200\246 is that byte (UTF-8 for …)
+COMMANDS = [(name, title.encode('latin-1').decode('unicode_escape').encode('latin-1').decode('utf-8'))
+            for name, title in re.findall(r'^\s+COMMAND (\w+), "([^"]+)"',
+                                          (ROOT / 'src/app/keys.s').read_text(encoding='utf-8'), re.M)]
 
 
 class EditorMatrix(unittest.TestCase):
