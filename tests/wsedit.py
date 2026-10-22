@@ -255,6 +255,17 @@ class Ws(host.Host):
         self.assertIn(' dirty=0 ', [l for l in out if l.startswith('tabs=2 ')][0])
         self.assertEqual(self.docs(out), ['hello world\nsecond line\n', 'Xpackage b\n'])
 
+    @unittest.skipIf(os.name == 'nt', 'needs a symbolic link')
+    def test_the_list_names_files_from_a_project_opened_through_a_link(self):
+        link = self.work / 'link'
+        link.symlink_to(self.proj, target_is_directory=True)
+        self.proj = link              # the editor opens the link; the files resolve past it
+        exts = self.ext({'go': 'apply LEN\n' + self.disk_edit()}, features='workspace-edits')
+        out = self.run_ws(exts, ['cmd wsx.go', 'wait-ext wsx running', 'wait 400', 'print-palette',
+                                 'key Escape'])
+        self.assertIn('  M  a.txt    1 edit', out)
+        self.assertIn('  M  c.txt    1 edit', out)
+
     def test_redo_writes_the_closed_file_again(self):
         exts = self.ext({'go': 'apply LEN\n' + self.disk_edit()}, features='workspace-edits',
                         project='write')
