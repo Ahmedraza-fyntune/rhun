@@ -18,6 +18,7 @@ F FDG_l2, 4
 F FDG_c2, 4
 F FDG_id, 8                      # owned cstr
 F FDG_ver, 8                     # the version its range is in (0: the file's text when it opened)
+F FDG_docid, 8                   # the document that version is of (DOC_id), 0: the file was not open
 ENDSTRUCT FDG_SIZE
 
 .bss
@@ -561,11 +562,14 @@ fd_add:
     mov [rax + FDG_ps], r15
     mov [rax + FDG_id], rbx
     mov qword ptr [rax + FDG_ver], 0
+    mov qword ptr [rax + FDG_docid], 0
     mov rcx, [rip + fd_target]
     test rcx, rcx
     jz 1f
-    mov rcx, [rcx + DOC_version]
-    mov [rax + FDG_ver], rcx
+    mov rdx, [rcx + DOC_version]
+    mov [rax + FDG_ver], rdx
+    mov rdx, [rcx + DOC_id]
+    mov [rax + FDG_docid], rdx
 1:
     lea rcx, [rip + fd_tmp]
     mov edx, [rcx]
@@ -832,9 +836,14 @@ FN filediag_ids
     mov eax, [r14 + FDG_c2]
     mov [rsp + 52], eax
     mov rdi, [rsp + 32]
-    mov rax, [r14 + FDG_ver]
-    cmp rax, [rdi + DOC_version]
+    mov rax, [r14 + FDG_ver]    # given for an earlier document of the file (closed since, its
+    mov rcx, [r14 + FDG_docid]  # marks made again from the stored places when it opened):
+    cmp rcx, [rdi + DOC_id]     # those places are this one's text as it opened
+    je 30f
+    xor eax, eax
+30: cmp rax, [rdi + DOC_version]
     je 31f
+    mov [rsp + 56], rax
     mov rsi, rax
     mov edx, [rsp + 40]
     dec edx
@@ -850,7 +859,7 @@ FN filediag_ids
     mov [rsp + 40], eax
     mov [rsp + 44], edx
     mov rdi, [rsp + 32]
-    mov rsi, [r14 + FDG_ver]
+    mov rsi, [rsp + 56]
     mov edx, [rsp + 48]
     dec edx
     mov ecx, [rsp + 52]

@@ -155,6 +155,29 @@ class Actions(lang.Lang):
         self.assertEqual(req[0].split()[4:8], ['3', '9', '3', '14'], req)
         self.assertEqual(req[0].split()[-1], 'd1', req)
 
+    def test_diagnostic_ids_survive_closing_and_reopening(self):
+        d = f'2 9 2 14 error 6 {len(rec("id", "d1"))}\nunused' + rec('id', 'd1')
+        body = '#1' + d
+        spec = self.spec({'code-actions': {'body': '0\n'}}, hello='hello 1 code-actions file-diagnostics',
+                         run={'diag': [[f'file-diagnostics 2 1 2 {len(body)}', body]]})
+        a = str(self.proj / 'a.rs')
+        self.run_actions(spec, ['key ctrl+Home', 'type x', 'key BackSpace', 'cmd lang.diag', 'wait 200', 'cmd save',
+                                'cmd close_tab', 'open ' + a, 'wait 300', 'key ctrl+Home', 'key Down', 'key End',
+                                'cmd code_actions', 'wait 300'], extra='[commands]\ndiag = Diagnose\n')
+        req = [r for r in self.requests('code-actions') if ' invoked ' in r]
+        self.assertEqual(req[-1].split()[-1], 'd1', req)
+
+    def test_the_lightbulb_follows_diagnostics_that_come_and_go(self):
+        diag = '2 9 2 14 error unused\n'
+        body = '1\n' + action('quickfix', 'Fix it', FIX, rec('preferred'))
+        spec = self.spec({'code-actions': {'body': body}}, run={'diag': [[f'diagnostics 1 0 1 {len(diag)}', diag]],
+                                                               'nodiag': [['diagnostics 1 0 0 0', '']]})
+        out = self.run_actions(spec, ['key ctrl+Home', 'key Down', 'wait 500', 'print-lightbulb', 'cmd lang.diag',
+                                      'wait 500', 'print-lightbulb', 'cmd lang.nodiag', 'wait 400', 'print-lightbulb'],
+                               extra='[commands]\ndiag = Diagnose\nnodiag = Clear\n')
+        bulbs = [l for l in out if l.startswith('lightbulb')]
+        self.assertEqual(bulbs, ['lightbulb=none', 'lightbulb line=2 count=1 preferred=1', 'lightbulb=none'], out)
+
     def test_v1_providers_keep_actions_and_get_no_kinds(self):
         spec = self.spec({'actions': {'body': '0\n'}}, hello='hello 1 actions')
         self.run_actions(spec, ['cmd code_actions', 'wait 300', 'cmd organize_imports', 'wait 300'])

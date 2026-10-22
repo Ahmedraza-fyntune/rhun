@@ -72,6 +72,7 @@ hc_ay: .long 0
 hc_lcols: .long 0               # the layout's widest line in columns
 hc_asked_doc: .quad 0           # the rest position last looked at
 hc_asked_pos: .quad 0
+hc_asked_since: .quad 0         # and when that rest began (g_hover_since)
 hc_gen: .quad 0                 # changes when the sections do
 hc_lgen: .quad 0                # the layout's
 hc_wcolor: .long 0              # wrap's color for emit
@@ -585,11 +586,11 @@ rank_of:
     jmp 1b
 5:  mov rdi, rbx
     call ext_full_name
-    mov r13, r12
+    xor r13d, r13d              # the name's first 7 bytes in the low 56 bits
     xor ecx, ecx
-6:  shl r13, 8
-    cmp ecx, 7
+6:  cmp ecx, 7
     jae 7f
+    shl r13, 8
     movzx edx, byte ptr [rax]
     test edx, edx
     jz 61f
@@ -597,7 +598,8 @@ rank_of:
 61: or r13, rdx
     inc ecx
     jmp 6b
-7:  shr r13, 8
+7:  shl r12, 56                 # the patterns' exactness above them
+    or r13, r12
     mov rax, r13
     EPILOGUE
 
@@ -687,6 +689,9 @@ FN hovercard_tick
     cmp rbx, [rip + hc_asked_doc]
     jne 2f
     cmp r12, [rip + hc_asked_pos]
+    jne 2f
+    mov rax, [rip + g_hover_since]
+    cmp rax, [rip + hc_asked_since]
     je 3f
 2:  call time_ms
     sub rax, [rip + g_hover_since]
@@ -694,6 +699,8 @@ FN hovercard_tick
     jl 3f
     mov [rip + hc_asked_doc], rbx
     mov [rip + hc_asked_pos], r12
+    mov rax, [rip + g_hover_since]
+    mov [rip + hc_asked_since], rax
     cmp dword ptr [rip + hc_state], 2
     jne 21f
     cmp dword ptr [rip + hc_kind], 0
@@ -783,9 +790,8 @@ FN hovercard_timeout
     mov rcx, [rip + hc_start]
     add rcx, HC_SHOW
     sub rcx, rax
-    jns 11f
-    xor ecx, ecx
-11: mov rbx, rcx
+    js 1f                       # past it: answers (or their expiry) wake the loop, not this
+    mov rbx, rcx
 1:  mov rax, [rip + hc_leave]
     test rax, rax
     jz 2f
@@ -808,6 +814,9 @@ FN hovercard_timeout
     jne 3f
     mov rax, [rip + g_hover_pos]
     cmp rax, [rip + hc_asked_pos]
+    jne 3f
+    mov rax, [rip + g_hover_since]
+    cmp rax, [rip + hc_asked_since]
     je 9f
 3:  mov rdi, r12
     call any_asks

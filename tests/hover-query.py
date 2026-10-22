@@ -49,6 +49,35 @@ class Hover(lang.Lang):
         self.assertTrue(any(' hover-query 1 0 2 10 pointer -' in l for l in log), log)
         self.assertFalse(any(l.startswith('0 hover ') for l in log), log)   # hover-query instead of v1's event
 
+    def test_a_slow_provider_keeps_no_elapsed_deadline(self):
+        root = self.provider({'hello': 'hello 1 hover-query', 'answers': {'hover-query': {'silent': True}}},
+                             'hover = *.rs\n')
+        out = self.run_lang(root, ['hover-at 2 10', 'wait 700', 'wait 900', 'print-hover-card',
+                                   'print-langfeat-waits'])
+        self.assertTrue(any(l.startswith('card=asking') for l in out), out)
+        self.assertIn(' hover=-1 ', out[-1])
+
+    def test_a_new_rest_on_the_same_place_asks_again(self):
+        root = self.two()
+        out = self.run_two(root, ['hover-at 2 10', 'wait 300', 'wait 400', 'print-hover-card', 'move 500 590',
+                                  'wait 300', 'wait 400', 'print-hover-card', 'hover-at 2 10', 'wait 300', 'wait 400',
+                                  'print-hover-card'])
+        cards = self.cards(out)
+        self.assertTrue(cards[0].startswith('card=shown'), out)
+        self.assertEqual(cards[1], 'card=none', out)
+        self.assertTrue(cards[2].startswith('card=shown'), out)
+        self.assertEqual(sum(1 for l in self.lang_log(name='alpha') if ' hover-query ' in l), 2)
+
+    def test_a_more_exact_pattern_ranks_first(self):
+        root = self.work / 'lang'
+        self.provider({'hello': 'hello 1 hover-query', 'answers': {'hover-query': {'body': hover(0, 0, 0, 0, 'A')}}},
+                      'hover = *\n', name='alpha', root=root)
+        self.provider({'hello': 'hello 1 hover-query', 'answers': {'hover-query': {'body': hover(0, 0, 0, 0, 'Z')}}},
+                      'hover = a.rs\n', name='zebra', root=root)
+        out = self.run_editor(['wait-ext fake/alpha running', 'wait-ext fake/zebra running', 'wait 200', 'hover-at 2 10',
+                               'wait 300', 'wait 500', 'print-hover-card'], exts=root, files=('a.rs',))
+        self.assertEqual(self.sections(out), ['section ext fake/zebra: Z', 'section ext fake/alpha: A'], out)
+
     def test_identical_texts_show_once_and_a_v1_answer_joins(self):
         root = self.two(a='same', b='same')
         self.provider({'hello': 'hello 1', 'hover_text': 'from v1'}, 'definition = *.go\n', name='gamma',

@@ -33,6 +33,7 @@ lc_rlen: .quad 0
     LCWRAP w_print_hover_card, c_print_hover_card
     LCWRAP w_hover_at, c_hover_at
     LCWRAP w_print_lightbulb, c_print_lightbulb
+    LCWRAP w_print_lf_waits, c_print_lf_waits
     LCWRAP w_print_doc_links, c_print_doc_links
     LCWRAP w_print_point, c_print_point
 
@@ -230,6 +231,47 @@ c_print_point:
 9:  pop rbx
     ret
 
+# print-langfeat-waits: "outline=N hover=N lightbulb=N": the ms until each wants a tick (-1 none),
+# so tests see that nothing keeps the loop polling
+c_print_lf_waits:
+    push rbx
+    mov rdi, [rip + lc_out]
+    lea rsi, [rip + .Lw_outline]
+    call sb_push_cstr
+    call outline_timeout
+    call lc_push_int
+    mov rdi, [rip + lc_out]
+    lea rsi, [rip + .Lw_hover]
+    call sb_push_cstr
+    call hovercard_timeout
+    call lc_push_int
+    mov rdi, [rip + lc_out]
+    lea rsi, [rip + .Lw_bulb]
+    call sb_push_cstr
+    call lightbulb_timeout
+    call lc_push_int
+    mov rdi, [rip + lc_out]
+    mov esi, 10
+    call sb_push_byte
+    pop rbx
+    ret
+
+# lc_push_int(eax): a signed number into the answer
+lc_push_int:
+    push rbx
+    mov ebx, eax
+    test ebx, ebx
+    jns 1f
+    mov rdi, [rip + lc_out]
+    mov esi, '-'
+    call sb_push_byte
+    neg ebx
+1:  mov rdi, [rip + lc_out]
+    mov esi, ebx
+    call sb_push_u64
+    pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -250,6 +292,10 @@ c_print_query:
 .Lc_print_hover_card: .asciz "print-hover-card"
 .Lc_hover_at: .asciz "hover-at"
 .Lc_print_lightbulb: .asciz "print-lightbulb"
+.Lc_print_lf_waits: .asciz "print-langfeat-waits"
+.Lw_outline: .asciz "outline="
+.Lw_hover: .asciz " hover="
+.Lw_bulb: .asciz " lightbulb="
 .Lc_print_doc_links: .asciz "print-doc-links"
 .Lc_print_point: .asciz "print-point"
 .Lpoint: .asciz "point "
@@ -266,6 +312,7 @@ langfeat_ctl:
     .quad .Lc_print_hover_card, w_print_hover_card
     .quad .Lc_hover_at, w_hover_at
     .quad .Lc_print_lightbulb, w_print_lightbulb
+    .quad .Lc_print_lf_waits, w_print_lf_waits
     .quad .Lc_print_doc_links, w_print_doc_links
     .quad .Lc_print_point, w_print_point
     .quad 0, 0

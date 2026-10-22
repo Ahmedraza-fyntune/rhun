@@ -103,6 +103,16 @@ class Results(lang.Lang):
         head = [l for l in out if l.startswith('set=') or l.startswith('results=')]
         self.assertEqual([h.split()[0] for h in head], ['set=2/2', 'set=1/2', 'set=1/1', 'results=none'], head)
 
+    def test_a_streaming_set_is_found_where_the_user_left_it(self):
+        root = self.provider({'hello': 'hello 1 references query-stream', 'answers': {
+            'references': {'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {'), 0.05]],
+                           'delay': 1.2, 'body': '1\n' + loc('{path}', 3, 5, 3, 10, 'total + 1')}}},
+            'references = *.rs\n')
+        out = self.run_lang(root, ['cmd references', 'wait 1600', 'key Escape', 'cmd references', 'wait 400',
+                                   'cmd results_back', 'wait 1300', 'print-results'])
+        head = [l for l in out if l.startswith('set=')]
+        self.assertTrue(head[0].startswith('set=1/2 '), out)
+
     def calls_spec(self):
         main = item('function', (1, 1, 4, 2), (1, 4, 1, 8), '{path}', 'main', 'fn()', 'D-MAIN')
         caller = item('function', (1, 1, 3, 2), (1, 4, 1, 10), '{project}/b.rs', 'helper', 'fn()', 'D-HELPER',
@@ -189,6 +199,33 @@ class Outline(lang.Lang):
         self.assertEqual(len(asked), 2, self.lang_log())         # and again after typing
         state = [l for l in out if l.startswith('tabs=')][-1]
         self.assertIn('line=1 col=1 sel=0', state)               # Up to "main", Enter: its start
+
+    def test_a_hidden_section_keeps_no_deadline(self):
+        root = self.provider({'hello': 'hello 1 symbols', 'answers': {'symbols': {'body': self.SYMS}}},
+                             'symbols = *.rs\n')
+        out = self.run_lang(root, ['cmd focus_outline', 'wait 300', 'key Escape', 'type x', 'cmd toggle_sidebar',
+                                   'wait 800', 'print-langfeat-waits'])
+        self.assertTrue(out[-1].startswith('outline=-1 '), out)
+
+    def test_another_document_drops_the_rows_at_once(self):
+        (self.proj / 'b.rs').write_text('fn b() {}\n', encoding='utf-8')
+        root = self.provider({'hello': 'hello 1 symbols', 'answers': {'symbols': {'body': self.SYMS, 'delay': 0.6}}},
+                             'symbols = *.rs\n')
+        out = self.run_lang(root, ['cmd focus_outline', 'wait 1000', 'print-outline', 'key Escape',
+                                   'open ' + str(self.proj / 'b.rs'), 'wait 100', 'print-outline'])
+        heads = [l for l in out if l.startswith('outline')]
+        self.assertIn('symbols=3', heads[0])
+        self.assertIn('symbols=0', heads[1], out)
+
+    def test_the_cursor_moving_along_a_line_moves_the_row(self):
+        (self.proj / 'c.rs').write_text('fn foo() {} fn bar() {}\n', encoding='utf-8')
+        syms = '2\n' + sym(1, 1, 1, 12, 'function', 0, 'foo') + sym(1, 13, 1, 24, 'function', 0, 'bar')
+        root = self.provider({'hello': 'hello 1 symbols', 'answers': {'symbols': {'body': syms}}}, 'symbols = *.rs\n')
+        out = self.run_lang(root, ['cmd focus_outline', 'wait 300', 'key Escape', 'key ctrl+Home', 'wait 50',
+                                   'print-outline', 'key End', 'wait 50', 'print-outline'], files=('c.rs',))
+        rows = self.rows(out)
+        self.assertIn(' cur ', rows[0])
+        self.assertIn(' cur ', rows[3], out)        # the second dump: "bar"
 
     def test_no_provider_no_section(self):
         out = self.run_lang(self.provider({'hello': 'hello 1'}, 'definition = *.rs\n'),
