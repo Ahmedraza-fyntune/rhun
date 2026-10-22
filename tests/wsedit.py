@@ -759,9 +759,9 @@ class Ws(host.Host):
         self.assertEqual(docs[1], docs[0])
         sels = [out[i + 1:i + 1 + int(l[5:])] for i, l in enumerate(out) if l.startswith('sels=')]
         self.assertEqual(sels[0], ['4 1 4 1', '5 1 5 1'], out)
-        # the caret at the replaced range's end stays before "}", the one where a line was put in
-        # goes after it
-        self.assertEqual(sels[1], ['4 1 4 1', '6 1 6 1'], out)
+        # the caret at the replaced range's end stays before "}"; where a line was only put in, the
+        # caret stays before it
+        self.assertEqual(sels[1], ['4 1 4 1', '5 1 5 1'], out)
 
 
 for name in dir(host.Host):
