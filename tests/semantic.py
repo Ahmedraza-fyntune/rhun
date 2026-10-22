@@ -100,6 +100,32 @@ class Semantic(pres.Base):
         self.assertEqual(len(oks), 8, r)                             # eight legends, the ninth too many
         self.assertTrue(any(x.startswith('error 12 toobig') for x in r), r)
 
+    def test_modifiers_past_32_and_overlaps(self):
+        # modifier 32 strikes; the 33 modifiers take all 64 bits of MODS
+        mods = ' '.join(f'm{i}' for i in range(32)) + ' gone=strike'
+        self.steps({'ready': [['semantic-legend L2 {LEN}', 'function variable\n' + mods]]},
+                   hello='hello 1 semantic-tokens')
+        self.answer('r1 L2 full 1\n1 8 1 1 4294967296')
+        out = self.run_p(self.start() + ['print-classes 2'])
+        self.assertIn(f'9-9={C_VARIABLE}', self.classes(out, 2))
+        self.assertEqual([l for l in out if l.startswith('fx ')], ['fx 9-9=1'])
+        # a later token at the same place wins with its effects too: the strike goes
+        self.answer('r1 L2 full 2\n1 8 1 1 4294967296 0 0 1 0 0')
+        out = self.run_p(self.start() + ['print-classes 2'])
+        self.assertIn(f'9-9={C_FUNCTION}', self.classes(out, 2))
+        self.assertEqual([l for l in out if l.startswith('fx ')], [])
+        # one across part of an earlier one keeps that one's effects outside it
+        self.answer('r1 L2 full 2\n1 4 3 1 4294967296 0 1 1 0 0')
+        out = self.run_p(self.start() + ['print-classes 2'])
+        self.assertEqual([l for l in out if l.startswith('fx ')], ['fx 5-5=1', 'fx 7-7=1'])
+
+    def test_an_end_inside_a_character_moves_back(self):
+        (self.proj / 'u.rs').write_text('a\u00e9z\n', encoding='utf-8')
+        self.answer('r1 L1 full 1\n0 0 2 1 0')
+        out = self.run_p(self.start() + ['print-classes 1'], files=('u.rs',))
+        self.assertIn(f'1-1={C_VARIABLE}', self.classes(out, 1))
+        self.assertNotIn(f'1-3={C_VARIABLE}', self.classes(out, 1))
+
     def test_setting_off_asks_nothing_and_draws_syntax(self):
         config = self.work / 'config/rhun/config'
         config.write_text(config.read_text() + '[editor]\nsemantic_highlighting = false\n')
