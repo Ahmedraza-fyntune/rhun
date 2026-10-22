@@ -2111,15 +2111,15 @@ FN cmd_debug_open_configurations
     xor esi, esi
     call sb_push_byte
     mov rdi, [rip + lab + SB_ptr]
-    call file_missing
+    call vfs_missing            # the host's in a remote window
     test eax, eax
     jz 1f
     mov rdi, [rip + lab + SB_ptr]
-    call mkdir_parent
+    call vfs_mkdir_parent
     mov rdi, [rip + lab + SB_ptr]
     lea rsi, [rip + .Ltemplate]
     mov edx, .Ltemplate_end - .Ltemplate
-    call file_write_all
+    call vfs_write_all
 1:  mov rdi, [rip + lab + SB_ptr]
     call app_open_file
 9:  EPILOGUE
@@ -2419,9 +2419,10 @@ addcfg_chosen:
     call sb_push_byte
     lea rdi, [rip + pickb]
     call sb_clear
+    # the project's file: the host's in a remote window
     mov rdi, [rip + lab + SB_ptr]
     mov esi, 1048576
-    call file_read_limited
+    call vfs_read_limited
     test rax, rax
     jz 1f
     mov r12, rax
@@ -2431,8 +2432,13 @@ addcfg_chosen:
     mov rdi, r12
     call mem_free
     jmp 2f
-1:  mov rdi, [rip + lab + SB_ptr]
-    call mkdir_parent
+1:  cmp rdx, -2                 # ENOENT: a new file; any other failure leaves it as it is
+    je 11f
+    lea rdi, [rip + .Lm_cfg_unread]
+    call dap_error
+    EPILOGUE
+11: mov rdi, [rip + lab + SB_ptr]
+    call vfs_mkdir_parent
     lea rdi, [rip + pickb]
     lea rsi, [rip + .Ltemplate]
     mov edx, .Ltemplate_end - .Ltemplate
@@ -2459,8 +2465,13 @@ addcfg_chosen:
     mov rdi, [rip + lab + SB_ptr]
     mov rsi, [rip + pickb + SB_ptr]
     mov rdx, [rip + pickb + SB_len]
-    call file_write_all
-    # the section's name becomes the selection
+    call vfs_write_all
+    test rax, rax
+    jz 31f
+    lea rdi, [rip + .Lm_cfg_unwritten]
+    call dap_error
+    EPILOGUE
+31: # the section's name becomes the selection
     mov rsi, [rip + tplb + SB_ptr]
     add rsi, [rsp]
     inc rsi                     # after [
@@ -3080,6 +3091,8 @@ FN dview_terminal_key
 .Lq_function: .asciz "Break on function (name)"
 .Lq_watch: .asciz "Watch expression"
 .Lf_launch: .asciz "/.rhun/launch.ini"
+.Lm_cfg_unread: .asciz "Add Configuration: .rhun/launch.ini could not be read (over 1 MB, or not a file), so it was left as it is"
+.Lm_cfg_unwritten: .asciz "Add Configuration: .rhun/launch.ini could not be written"
 .Ltemplate: .ascii "# Launch configurations for rhun's debugger: one section per configuration.\n"
     .ascii "# type names a debugger an installed extension provides; other keys are its launch\n"
     .ascii "# arguments. See the guide's Debugging chapter.\n"

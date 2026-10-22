@@ -132,6 +132,20 @@ class Feature(FeatureHost):
         self.run_editor(['cmd rhun-tests/debugfake.stop', 'wait 500'])
         self.assertIn('error 1 unknown debug-stop needs the debug feature', self.ext_log())
 
+    def test_integer_leaves_by_value(self):
+        # review: the length limit refused -9007199254740991 and let 9007199254740992 and 007 through
+        self.mode(start=[{'leaves': self.leaves(count=('n', '-9007199254740991'))}])
+        self.run_editor(['cmd rhun-tests/debugfake.start', 'wait 500', 'dialog yes', 'wait-debug ended', 'wait 300'])
+        self.assertIn('ok 1 1', self.ext_log())
+        self.assertEqual(self.args_sent()['count'], -9007199254740991)
+        for pair in (('9007199254740992', '007'), ('-0', '0x1')):
+            with self.subTest(pair=pair):
+                (self.ext_state() / 'debugfake.log').unlink()
+                self.mode(burst=True, start=[{'leaves': self.leaves(count=('n', v))} for v in pair])
+                self.run_editor(['cmd rhun-tests/debugfake.start', 'wait 500'])
+                errors = [l for l in self.ext_log() if l.startswith('error ')]
+                self.assertEqual([l.split(' ')[2] for l in errors], ['syntax', 'syntax'], self.ext_log())
+
     def test_bodies_that_do_not_parse(self):
         bad = ['1\nx 4 4\ntypefake', '2\ns 4 4\ntypefake', '1\ns 4 9\ntypefake', '1\nn 5 2\ncount1x',
                '1\nb 3 3\nyesyes', '1\nz 1 1\naa', 'nope', '3\ns 4 4\ntypefakes 3 1\na.bxs 5 1\na.b.cy',

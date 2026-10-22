@@ -507,11 +507,14 @@ on_lines:
     mov r12d, edi
     mov rbx, rdx
     mov r15d, ecx               # the field that holds this fd
-    # a tcp adapter's standard output is where the program it starts writes (Delve's debuggee)
+    # a tcp adapter's standard output is where the program it starts writes (Delve's debuggee);
+    #   each stream keeps its own line in progress
     mov dword ptr [rsp], DCON_ADAPTER
+    mov dword ptr [rsp + 4], DS_ebuf
     cmp ecx, DS_aout
     jne 1f
     mov dword ptr [rsp], DCON_STDOUT
+    mov dword ptr [rsp + 4], DS_obuf
 1:  mov edi, r12d
     lea rsi, [rip + errchunk]
     mov edx, 4096
@@ -525,6 +528,7 @@ on_lines:
     # closed: what is left is a last line
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     mov edi, r12d
     call watch_remove
@@ -543,25 +547,31 @@ on_lines:
     jne 4f
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     jmp 3b
-4:  lea rdi, [rbx + DS_ebuf]
+4:  mov eax, [rsp + 4]
+    lea rdi, [rbx + rax]
     call sb_push_byte
-    cmp qword ptr [rbx + DS_ebuf + SB_len], DAP_LINE_MAX
+    mov eax, [rsp + 4]
+    cmp qword ptr [rbx + rax + SB_len], DAP_LINE_MAX
     jb 3b
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     jmp 3b
 9:  EPILOGUE
 
-# err_flush(ds, category): the line in progress, if any, to the console and the tail
+# err_flush(ds, category, DS_ebuf | DS_obuf): that line in progress, if any, to the console and the
+#   tail
 err_flush:
     PROLOGUE
     mov rbx, rdi
     mov r14d, esi
-    mov r12, [rbx + DS_ebuf + SB_ptr]
-    mov r13, [rbx + DS_ebuf + SB_len]
+    mov r15d, edx
+    mov r12, [rbx + r15 + SB_ptr]
+    mov r13, [rbx + r15 + SB_len]
     test r13, r13
     jz 9f
     cmp byte ptr [r12 + r13 - 1], 13
@@ -605,7 +615,7 @@ err_flush:
     mov rdx, rsi
     lea rsi, [rdi + rcx]
     call memmove
-8:  lea rdi, [rbx + DS_ebuf]
+8:  lea rdi, [rbx + r15]
     call sb_clear
 9:  EPILOGUE
 

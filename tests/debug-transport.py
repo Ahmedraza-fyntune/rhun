@@ -44,6 +44,13 @@ class Transport(debughost.DebugHost):
         self.assertEqual(reqs[0], 'initialize')
         self.assertEqual(reqs[-1], 'disconnect')
 
+    def test_tcp_output_and_error_lines_stay_apart(self):
+        # review: one line-in-progress buffer for both streams mixed a partial stdout line with stderr
+        self.tcp_ini()
+        out = self.run_editor([*self.start(), 'wait 1500', 'print-console'], mode='mixed-out')
+        self.assertIn('stdout partial', out)
+        self.assertIn('adapter diag', out)
+
     def test_tcp_port_in_the_approval(self):
         self.tcp_ini()
         out = self.run_editor(['debug-start Run', 'print-dialog', 'dialog no', 'wait 200', 'print-debug'])
