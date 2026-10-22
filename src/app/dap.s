@@ -71,6 +71,7 @@ FN dap_live_count
     ret
 
 # slot_index(ds) -> eax its slot
+FN dap_slot_index
 slot_index:
     mov rax, rdi
     lea rcx, [rip + g_dsess]
@@ -386,10 +387,8 @@ FN dap_start
     mov rdi, [rip + g_dstart_msg]
     jmp .Lst_msg
 .Lst_tcp:
-    # a free loopback port for ${port}; the adapter listens there and rhun connects. In a remote
-    #   window the adapter would listen on the host, which this connection does not reach yet
-    cmp dword ptr [rip + g_remote], 0
-    jne .Lst_tcpremote
+    # a free loopback port for ${port}; the adapter listens there and rhun connects (in a remote
+    #   window on the host's loopback, through the host: dap_connect_try)
     call dap_pick_port
     test eax, eax
     js .Lst_noport
@@ -399,9 +398,7 @@ FN dap_start
 .Lst_noport:
     lea rdi, [rip + .Lm_noport]
     jmp .Lst_msg
-.Lst_tcpremote:
-    lea rdi, [rip + .Lm_tcpremote]
-    jmp .Lst_msg
+
 .Lst_noneeds:
     lea rdi, [rip + .Lm_noneeds]
     jmp .Lst_msg
@@ -5296,7 +5293,6 @@ dap_m_busy:
 .Lm_preparing: .asciz "a launch is being prepared by its debugger's extension"
 .Lm_badserver: .asciz "server must be PORT or HOST:PORT, with HOST localhost or an IPv4 address"
 .Lm_noport: .asciz "no free TCP port on 127.0.0.1 for the debugger"
-.Lm_tcpremote: .asciz "this debugger is reached over TCP (transport = tcp), which rhun does not do in a remote window yet"
 .Lm_nosocket: .asciz "rhun could not create a TCP socket for the debugger"
 .Lm_noconn: .asciz "the debugger did not accept a connection on "
 .Lm_noconn2: .asciz " in 10 s"

@@ -348,7 +348,12 @@ FN dap_tcp_split
 FN dap_connect_try
     PROLOGUE 32
     mov rbx, rdi
-    mov r12d, [rbx + DS_csock]
+    # a remote window: the adapter listens on the host's loopback, which the host connects to
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    cmp dword ptr [rbx + DS_addr], DAP_LOOPBACK
+    je .Lct_remote
+1:  mov r12d, [rbx + DS_csock]
     test r12d, r12d
     jns 2f
     mov edi, DSK_AF_INET
@@ -429,6 +434,75 @@ FN dap_connect_try
     SYS SYS_close
     mov dword ptr [rbx + DS_out], -1
     mov rax, r13
+9:  EPILOGUE
+.Lct_remote:
+    # one attempt at a time: a socketpair whose other end the host's connection carries
+    #   (remote_sock_connect); refused, it is tried again on the next tick
+    mov eax, [rbx + DS_rconn]
+    cmp eax, 2
+    je 13f
+    cmp eax, 1
+    je 4b                       # the host is still connecting
+    cmp eax, 3
+    jne 11f
+    mov edi, [rbx + DS_csock]
+    SYS SYS_close
+    mov dword ptr [rbx + DS_csock], -1
+    mov dword ptr [rbx + DS_rconn], 0
+    jmp 4b
+11: mov edi, AF_UNIX
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
+    xor edx, edx
+    lea r10, [rsp]
+    SYS SYS_socketpair
+    test rax, rax
+    js 9b
+    mov eax, [rsp]
+    mov [rbx + DS_csock], eax
+    inc dword ptr [rbx + DS_rtry]
+    mov dword ptr [rbx + DS_rconn], 1
+    mov rdi, rbx
+    call dap_slot_index
+    mov ecx, [rbx + DS_rtry]
+    shl rcx, 8
+    or rcx, rax
+    mov edi, [rsp + 4]
+    mov esi, [rbx + DS_port]
+    lea rdx, [rip + rconn_done]
+    call remote_sock_connect    # it owns the other end, also when it fails
+    test rax, rax
+    jns 4b
+    mov dword ptr [rbx + DS_rconn], 3     # no channel now: again on the next tick
+    jmp 4b
+13: mov r12d, [rbx + DS_csock]
+    mov dword ptr [rbx + DS_rconn], 0
+    jmp 5b
+
+# rconn_done(slot | attempt << 8, 0 connected | 1 refused): the host's answer to a connection; the
+#   next tick goes on (connect_tick)
+rconn_done:
+    PROLOGUE
+    mov r12, rdi
+    mov r13d, esi
+    movzx edi, r12b
+    cmp edi, DS_MAX
+    jae 9f
+    call dap_slot
+    mov rbx, rax
+    shr r12, 8
+    cmp r12d, [rbx + DS_rtry]
+    jne 9f
+    cmp dword ptr [rbx + DS_rconn], 1
+    jne 9f
+    mov eax, 2
+    test r13d, r13d
+    jz 1f
+    mov eax, 3
+1:  mov [rbx + DS_rconn], eax
+    test r13d, r13d
+    jnz 2f
+    mov qword ptr [rbx + DS_deadline], 0  # connected: at once
+2:  mov dword ptr [rip + g_dirty], 1
 9:  EPILOGUE
 
 # ---------------- reading ----------------
