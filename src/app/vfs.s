@@ -569,7 +569,7 @@ FN vfs_write_all
     jb 3b
     jmp 9f
 32: test rax, rax
-    js 9f
+    js 7f                       # made by us (not EEXIST) and not all written: it goes
     mov rax, [rsp + 8]
     mov [rsp], rax              # written
 4:  mov rax, r13

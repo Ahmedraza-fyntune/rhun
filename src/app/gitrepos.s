@@ -31,6 +31,7 @@ ENDSTRUCT GR_SIZE
 .p2align 3
 gr_slots: .zero GR_SIZE*GR_MAX
 gr_doc: .quad 0                 # the active document followed last
+gr_path: .quad 0                # and its path then (owned), 0 untitled
 gr_count: .long 0
 gr_gen: .long 0                 # answers for older slots are dropped
 gr_built: .long 0
@@ -121,7 +122,12 @@ gr_rebuild:
     mov eax, [rip + cfg_git]
     mov [rip + gr_cfg], eax
     mov dword ptr [rip + gr_built], 1
-    mov qword ptr [rip + gr_doc], 0     # the active document is followed again
+    push rbx
+    push rbx
+    xor ebx, ebx                # the active document is followed again
+    call gr_doc_note
+    pop rbx
+    pop rbx
     lea rdi, [rip + gr_of]
     mov eax, -1
     mov ecx, GR_MAX
@@ -221,8 +227,49 @@ FN gitrepos_pick
     cmp edi, [rip + gr_count]
     jae 9f
     call gr_show
-    mov rax, [rip + g_doc]
-    mov [rip + gr_doc], rax
+    mov rbx, [rip + g_doc]
+    call gr_doc_note
+9:  EPILOGUE
+
+# gr_doc_same() -> eax 1 when rbx is the document followed last, at the path it had
+gr_doc_same:
+    xor eax, eax
+    cmp rbx, [rip + gr_doc]
+    jne 9f
+    test rbx, rbx
+    jz 8f
+    push rbx
+    mov rdi, [rbx + DOC_path]
+    mov rsi, [rip + gr_path]
+    test rdi, rdi
+    jz 1f
+    test rsi, rsi
+    jz 2f
+    call strcmp_eq
+    pop rbx
+    ret
+1:  test rsi, rsi               # both untitled
+    sete al
+    movzx eax, al
+2:  pop rbx
+    ret
+8:  mov eax, 1
+9:  ret
+
+# gr_doc_note(): rbx is the document followed, at its path now
+gr_doc_note:
+    PROLOGUE
+    mov [rip + gr_doc], rbx
+    mov rdi, [rip + gr_path]
+    call mem_free
+    mov qword ptr [rip + gr_path], 0
+    test rbx, rbx
+    jz 9f
+    mov rdi, [rbx + DOC_path]
+    test rdi, rdi
+    jz 9f
+    call dup_cstr
+    mov [rip + gr_path], rax
 9:  EPILOGUE
 
 # gr_follow(): a new active document in another folder's repository: git.s shows that one (a folder
@@ -237,9 +284,10 @@ gr_follow:
     cmp rax, 2
     jb 9f
     mov rbx, [rip + g_doc]
-    cmp rbx, [rip + gr_doc]
-    je 9f
-    mov [rip + gr_doc], rbx
+    call gr_doc_same            # the same document at the same path (Save As moves it)
+    test eax, eax
+    jnz 9f
+    call gr_doc_note
     test rbx, rbx
     jz 9f
     mov rdi, [rbx + DOC_path]
@@ -353,7 +401,10 @@ FN gitrepos_tick
     call gr_shown
     test eax, eax
     jz 4f
-    # git.s keeps this one's status
+    # git.s keeps this one's status, and its branch
+    lea rdi, [r12 + GR_branch]
+    lea rsi, [rip + g_branch]
+    call cstr_copy
     mov dword ptr [r12 + GR_shown], 1
     mov dword ptr [r12 + GR_due], 0
     mov qword ptr [r12 + GR_at], 0
@@ -487,8 +538,6 @@ FN gitrepos_status_of
     jae 5f
     mov edi, ebx
     call gr_at
-    cmp dword ptr [rax + GR_loaded], 0
-    je 4f
     mov rcx, [rax + GR_rootlen]
     cmp rcx, r15
     jbe 4f
@@ -513,6 +562,8 @@ FN gitrepos_status_of
     mov edi, r14d
     call gr_at
     mov rbx, rax
+    cmp dword ptr [rbx + GR_loaded], 0
+    je 9f
     lea rdi, [rbx + GR_table]
     call git_table_swap
     lea rdi, [r12 + r15 + 1]
@@ -526,6 +577,41 @@ FN gitrepos_status_of
     call git_table_swap
 9:  mov eax, [rsp]
     mov edx, [rsp + 4]
+    EPILOGUE
+
+# FN gitrepos_owns(path cstr, len) -> eax 1 when a repository whose work tree is longer than len
+#   holds the path: another folder's repository inside the one git.s shows answers for it
+FN gitrepos_owns
+    PROLOGUE 16
+    mov r12, rdi
+    mov r14, rsi
+    xor r15d, r15d
+    cmp dword ptr [rip + gr_count], 0
+    je 9f
+    call strlen
+    mov r13, rax
+    xor ebx, ebx
+1:  cmp ebx, [rip + gr_count]
+    jae 9f
+    mov edi, ebx
+    inc ebx
+    call gr_at
+    mov rcx, [rax + GR_rootlen]
+    cmp rcx, r14
+    jbe 1b
+    lea rdx, [rcx + 1]
+    cmp r13, rdx
+    jbe 1b
+    cmp byte ptr [r12 + rcx], '/'
+    jne 1b
+    mov rdi, r12
+    mov rsi, [rax + GR_root]
+    mov rdx, rcx
+    call memeq
+    test eax, eax
+    jz 1b
+    mov r15d, 1
+9:  mov eax, r15d
     EPILOGUE
 
 # FN gitrepos_draw_row(x, y, w) -> eax the height it took: Source Control's repositories, a line
