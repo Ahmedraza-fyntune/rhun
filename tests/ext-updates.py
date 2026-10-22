@@ -103,6 +103,13 @@ class Updates(host.Host):
         self.assertEqual(out[1], 'toast=Could not install demo/hello: no release v9.9.9 of demo/hello for %s'
                          % extrel.TARGET)
 
+    def test_audio_permission_is_shown_at_install_and_after_restart(self):
+        self.rel.publish('demo', 'hello', files('0.1.0', needs='audio = yes'), 'v0.1.0')
+        out = self.install('demo/hello@0.1.0')
+        self.assertIn('access local audio devices and services', '\n'.join(out))
+        out = self.ui(['ext-page hello', 'print-ext-page'])
+        self.assertIn('access local audio devices and services', '\n'.join(out))
+
     def test_a_new_version_keeps_the_old_one_and_roll_back_swaps_them(self):
         self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
         self.install('demo/hello@0.1.0')
@@ -261,6 +268,20 @@ class Updates(host.Host):
         self.assertIn('demo/hello installed=0.1.0 latest=0.2.0 state=asks from=github', out)
         self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)
         self.assertFalse(any(p.name.startswith('.install') for p in self.exts.iterdir()))
+
+    def test_adding_audio_requires_approval_and_cancel_keeps_the_old_version(self):
+        self.serve()
+        self.rel.publish('demo', 'hello', files('0.1.0'), 'v0.1.0')
+        self.install('demo/hello')
+        self.rel.publish('demo', 'hello', files('0.2.0', needs='audio = yes'), 'v0.2.0')
+        out = self.ui(['wait-ext hello running', 'ext-check-updates', 'wait-ext-updates', 'ext-update demo/hello',
+                       'wait-ext-updates', 'print-dialog', 'dialog no', 'wait-ext-updates',
+                       'print-ext-versions demo/hello'])
+        self.assertIn('It now also asks to: access local audio devices and services.', out)
+        self.assertIn('version=0.1.0 source=github tag=v0.1.0 previous=- link=no fresh=0', out)
+        out = self.ui(['ext-update demo/hello', 'wait-ext-updates', 'dialog yes', 'wait-ext-updates',
+                       'wait-ext hello running', 'print-ext-versions demo/hello'])
+        self.assertIn('version=0.2.0 source=github tag=v0.2.0 previous=0.1.0 link=no fresh=0', out)
 
     def test_a_version_rolled_back_from_is_skipped_until_a_newer_one(self):
         self.serve()

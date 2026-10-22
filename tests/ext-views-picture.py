@@ -65,6 +65,21 @@ class Pictures(ViewsBase):
                          'key w', 'key-up w', 'wait 100'])
         self.assertFalse(any(' key-up ' in line for line in self.fake_log()))
 
+    def test_key_state_requires_view_keys(self):
+        self.env['VIEWFAKE_PIC'] = 'nokeys'
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'wait 100'])
+        self.assertFalse(any(' key ' in line or ' key-up ' in line for line in self.fake_log()))
+
+    def test_releases_use_the_unshifted_key_name(self):
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key shift+1', 'key-up shift+1', 'wait 100'])
+        self.assertIn(f'0 view {PIC} key-up shift 1', self.fake_log())
+
     def test_copy_asks_the_picture_and_paste_brings_text_to_it(self):
         (self.proj / 'note.txt').write_text('pasted words', encoding='utf-8')
         x, y = self.shown()
