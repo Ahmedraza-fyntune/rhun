@@ -8,6 +8,8 @@
 #   print-chord               "chord=none" or "chord=STROKE fallback=COMMAND ms=N"
 #   key-latin LATIN COMBO     a key press whose Latin-layout key is LATIN (a layout that is not Latin)
 #   print-contrib-problems EXT  the extension's dropped contribution entries
+#   print-ext-page-contributions EXT  the extension page's Contributions block: "head TEXT" and
+#                             "row plain|warning|error TEXT -- DETAIL" lines
 #   print-status              the status items: side, priority, owner, text, command, where drawn
 #   print-title-buttons       the tab strip's editor_title buttons: command, where drawn; its "…"
 #   view-item-menu VIEW ID [CONTEXT]  a tree row's view_item menu (CONTEXT: its viewItem) at the mouse
@@ -35,6 +37,7 @@ contrib_ctl:
     .quad .Lc_print_problems, c_print_problems, .Lc_print_status, c_print_status
     .quad .Lc_print_title_buttons, c_print_title_buttons, .Lc_view_item_menu, c_view_item_menu
     .quad .Lc_print_langconf, c_print_langconf, .Lc_print_icon, c_print_icon
+    .quad .Lc_print_page, c_print_page
     .quad 0, 0
 .Lc_cmd_args: .asciz "cmd-args"
 .Lc_cmd_ref: .asciz "cmd-ref"
@@ -45,6 +48,7 @@ contrib_ctl:
 .Lc_print_chord: .asciz "print-chord"
 .Lc_key_latin: .asciz "key-latin"
 .Lc_print_problems: .asciz "print-contrib-problems"
+.Lc_print_page: .asciz "print-ext-page-contributions"
 .Lc_print_status: .asciz "print-status"
 .Lc_print_title_buttons: .asciz "print-title-buttons"
 .Lc_view_item_menu: .asciz "view-item-menu"
@@ -242,9 +246,19 @@ c_key_latin:
 9:  xor eax, eax
     EPILOGUE
 
+# print-ext-page-contributions EXT
+c_print_page:
+    lea rcx, [rip + contrib_page_dump]
+    jmp cc_ext_dump
 # print-contrib-problems EXT
 c_print_problems:
+    lea rcx, [rip + contrib_problems_dump]
+    jmp cc_ext_dump
+# cc_ext_dump(out, rest, len, fn(out, ext)) -> rax 0: fn for the extension named, or "no such
+#   extension"
+cc_ext_dump:
     PROLOGUE
+    mov r12, rcx
     mov rbx, rdi
     mov rdi, rsi
     mov rsi, rdx
@@ -256,7 +270,7 @@ c_print_problems:
     jz 8f
     mov rdi, rbx
     mov rsi, rax
-    call contrib_problems_dump
+    call r12
     xor eax, eax
     EPILOGUE
 8:  mov rdi, rbx

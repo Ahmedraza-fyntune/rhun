@@ -160,7 +160,18 @@ lck_index:
     jmp 1b
 2:  mov eax, ebx
     EPILOGUE
-8:  mov eax, -1
+8:  # toggle_comment, a grammar's name for the comment token Toggle Comment uses: comment
+    cmp r14d, LCK_COMMENT
+    jbe 9f
+    mov rdi, r12
+    mov rsi, r13
+    lea rdx, [rip + .Lk_toggle]
+    call str_eq_cstr
+    test eax, eax
+    jz 9f
+    mov eax, LCK_COMMENT
+    EPILOGUE
+9:  mov eax, -1
     EPILOGUE
 
 # lcf_count(ptr, len) -> rax tokens, rdx the longest, rcx the shortest
@@ -660,14 +671,17 @@ FN lc_for_gr
     mov rbx, rdi
     test rbx, rbx
     jnz 1f
-    lea rax, [rip + lc_dflt]
-    cmp qword ptr [rip + lc_dflt_ok], 0
-    jne 9f
-    mov rdi, rax
+    # no grammar: Plain Text, with the extensions' [language.Plain_Text] keys
+    call lcf_sig
+    inc rax                     # never 0, which means "not built"
+    lea rcx, [rip + lc_dflt]
+    cmp [rip + lc_dflt_ok], rax
+    je 8f
+    mov [rip + lc_dflt_ok], rax
+    mov rdi, rcx
     xor esi, esi
     call lc_build
-    mov qword ptr [rip + lc_dflt_ok], 1
-    lea rax, [rip + lc_dflt]
+8:  lea rax, [rip + lc_dflt]
     jmp 9f
 1:  mov rdi, rbx
     call syntax_ready
@@ -719,12 +733,21 @@ lcf_grammar_value:
     ret
 1:  cmp esi, LCK_COLON
     jne 2f
-    test qword ptr [rdi + GR_flags], GF_COLON
-    jz 9f
     lea rax, [rip + .Lv_yes]
+    test qword ptr [rdi + GR_flags], GF_COLON
+    jnz 9f
+    lea rax, [rip + .Lv_no]     # an explicit no is a value (a user grammar's wins)
+    test qword ptr [rdi + GR_flags], GF_COLON_SET
+    jnz 9f
+    xor eax, eax
     ret
 2:  cmp esi, LCK_IDENT
-    je 9f                       # in GR_wchar already
+    jne 3f
+    test qword ptr [rdi + GR_flags], GF_IDENT_SET
+    jz 9f
+    lea rax, [rdi + GR_identx]  # (in GR_wchar already)
+    ret
+3:
     mov rdx, [rdi + GR_lckeys]
     test rdx, rdx
     jz 9f
@@ -740,7 +763,7 @@ lcf_resolve:
     call lcf_grammar_value
     mov r13, rax
     test rbx, rbx
-    jz 7f
+    jz 1f                       # Plain Text: the extensions' keys only
     test qword ptr [rbx + GR_flags], GF_USER
     jz 1f
     test r13, r13
@@ -765,10 +788,13 @@ lcf_resolve:
     cmp dword ptr [rax + EXT_disabled], 0
     jne 2b
     mov rdi, [r15 + LO_lang]
+    lea rsi, [rip + .Lplain_text]
+    test rbx, rbx
+    jz 3f
     mov rsi, [rbx + GR_name]
     test rsi, rsi
     jz 2b
-    call lcf_name_eq
+3:  call lcf_name_eq
     test eax, eax
     jz 2b
     mov rax, [r15 + LO_val]
@@ -2339,9 +2365,11 @@ lcf_doc_eq:
 8:  xor eax, eax
     EPILOGUE
 
-# lcf_close_at(doc, pos, byte) -> eax 1 when a pair's CLOSE starting with byte is at pos
+# lcf_close_at(doc, pos, byte) -> eax 1 when the byte at pos is byte and part of a pair's CLOSE
+#   there: one starting at pos, or one begun before it (the rest of a closer being typed over, "}"
+#   of "%}" after its "%")
 lcf_close_at:
-    PROLOGUE
+    PROLOGUE 16
     mov rbx, rdi
     mov r12, rsi
     mov r13d, edx
@@ -2352,16 +2380,30 @@ lcf_close_at:
     imul rax, r15, LCP_SIZE
     lea rcx, [r14 + LC_pairs + rax]
     inc r15
-    movzx eax, byte ptr [rcx + LCP_close]
-    cmp eax, r13d
-    jne 1b
+    mov [rsp], rcx
+    xor eax, eax                # k: how far into CLOSE pos is
+    mov [rsp + 8], rax
+2:  mov rcx, [rsp]
+    mov rax, [rsp + 8]
+    movzx edx, byte ptr [rcx + LCP_clen]
+    cmp rax, rdx
+    jae 1b
+    cmp rax, r12
+    ja 1b
+    movzx edx, byte ptr [rcx + LCP_close + rax]
+    cmp edx, r13d
+    jne 3f
     mov rdi, rbx
     mov rsi, r12
+    sub rsi, rax
     lea rdx, [rcx + LCP_close]
     movzx ecx, byte ptr [rcx + LCP_clen]
     call lcf_doc_eq
     test eax, eax
-    jz 1b
+    jnz 9f
+3:  inc qword ptr [rsp + 8]
+    jmp 2b
+9:  mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -2929,6 +2971,69 @@ FN langconf_dump
     jmp 1b
 9:  EPILOGUE
 
+# FN langconf_page_rows(ext): the extension page's Languages rows for its [language.NAME]
+#   sections (contribpage.s): the language; the keys it sets
+FN langconf_page_rows
+    PROLOGUE 16
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + lo_list + VEC_len]
+    jae 9f
+    imul r12, rbx, LO_SIZE
+    add r12, [rip + lo_list + VEC_ptr]
+    inc rbx
+    cmp [r12 + LO_ext], r15
+    jne 1b
+    # the first of its language
+    xor r13d, r13d
+2:  lea rax, [rbx - 1]
+    cmp r13, rax
+    jae 3f
+    imul r14, r13, LO_SIZE
+    add r14, [rip + lo_list + VEC_ptr]
+    inc r13
+    cmp [r14 + LO_ext], r15
+    jne 2b
+    mov rdi, [r14 + LO_lang]
+    mov rsi, [r12 + LO_lang]
+    call strcmp_eq
+    test eax, eax
+    jnz 1b
+    jmp 2b
+3:  mov rdi, [r12 + LO_lang]
+    call contrib_page_text
+    lea rdi, [rip + .Lpg_keys]
+    call contrib_page_detail
+    lea r13, [rbx - 1]
+    mov qword ptr [rsp], 0      # keys written
+4:  cmp r13, [rip + lo_list + VEC_len]
+    jae 6f
+    imul r14, r13, LO_SIZE
+    add r14, [rip + lo_list + VEC_ptr]
+    inc r13
+    cmp [r14 + LO_ext], r15
+    jne 4b
+    mov rdi, [r14 + LO_lang]
+    mov rsi, [r12 + LO_lang]
+    call strcmp_eq
+    test eax, eax
+    jz 4b
+    cmp qword ptr [rsp], 0
+    je 5f
+    lea rdi, [rip + .Lpg_comma]
+    call contrib_page_detail
+5:  inc qword ptr [rsp]
+    mov rax, [r14 + LO_key]
+    cmp rax, LCK_COUNT
+    jae 4b
+    lea rcx, [rip + lck_names]
+    mov rdi, [rcx + rax*8]
+    call contrib_page_detail
+    jmp 4b
+6:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 .section .rodata
 .p2align 3
 lck_names:
@@ -2956,6 +3061,10 @@ src_names: .quad .Ls0, .Ls1, .Ls2, .Ls3
 .Ls2: .asciz "user"
 .Ls3: .asciz "ext:"
 .Ld_source: .asciz " source="
+.Lpg_keys: .asciz "language keys: "
+.Lplain_text: .asciz "Plain Text"
+.Lk_toggle: .asciz "toggle_comment"
+.Lpg_comma: .asciz ", "
 .Ld_autoclose: .asciz "( ) [ ] { } \" \" ' ' ` `"
 .Ld_code: .asciz "\" ' `"
 .Ld_brackets: .asciz "() [] {}"

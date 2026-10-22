@@ -97,6 +97,21 @@ class LangConf(contribhost.Contrib):
         doc, _ = self.edit('h.html', '<!-- <p> -->', ['cmd toggle_comment'])
         self.assertEqual(doc, '<p>')
 
+    def test_toggle_comment_with_a_block_pair_at_several_selections(self):
+        text = '<p>\n  <b>x</b>   \n</p>\n'
+        acts = self.carets('h.html', text, [1, 2])
+        doc, _ = self.edit('h.html', text, acts + ['cmd toggle_comment'])
+        self.assertEqual(doc, '<!-- <p> -->\n  <!-- <b>x</b> -->   \n</p>\n')
+        doc, _ = self.edit('h.html', text, acts + ['cmd toggle_comment', 'cmd toggle_comment'])
+        self.assertEqual(doc, text)
+        doc, _ = self.edit('h.html', text, acts + ['cmd toggle_comment', 'key ctrl+z'])
+        self.assertEqual(doc, text)                         # one undo step
+
+    def test_typing_a_multibyte_closer_over_its_rest(self):
+        self.user_grammar(TOY)
+        doc, _ = self.edit('t.toy', '', ['type {%', 'type x', 'type %}', 'type y'])
+        self.assertEqual(doc, '{%x%}y')
+
     # ---------------------------------------------------------------- a grammar with every key
 
     def test_a_grammar_with_every_key(self):
@@ -155,6 +170,31 @@ class LangConf(contribhost.Contrib):
         self.assertIn('problem=[language.Lua] bogus: not a language key', out)
         self.assertIn('problem=[language.Lua] continue: also set by alice/demo', out)
         self.assertIn('problem=[language.Lua] continue: also set by bob/other', out)
+
+    def test_plain_text_takes_its_overlay(self):
+        root = self.lang_ext('alice', 'demo', '[language.Plain_Text]\ncontinue = >\n')
+        doc, out = self.edit('a.txt', '> hello', ['key Return', 'type b'], exts=root, extra=['print-langconf'])
+        self.assertEqual(doc, '> hello\n> b')
+        self.assertIn('continue=> source=ext:alice/demo', out)
+        # turned off: the default again (the cached configuration follows the overlays)
+        doc, _ = self.edit('a.txt', '> hello', ['ext-set demo disabled 1', 'key Return', 'type b'], exts=root)
+        self.assertEqual(doc, '> hello\nb')
+
+    def test_toggle_comment_as_an_overlay_key(self):
+        root = self.lang_ext('alice', 'demo', '[language.Batch]\ntoggle_comment = ::\n')
+        doc, out = self.edit('a.bat', 'echo hi', ['cmd toggle_comment'], exts=root,
+                             extra=['print-contrib-problems alice/demo'])
+        self.assertEqual(doc, ':: echo hi')
+        self.assertFalse([l for l in out if l.startswith('problem=')], out)
+
+    def test_a_user_grammars_no_and_ident_win(self):
+        self.user_grammar(TOY + 'colon_indent = no\nident = $\n')
+        root = self.lang_ext('alice', 'demo', '[language.Toy]\ncolon_indent = yes\nident = @\n')
+        doc, out = self.edit('t.toy', '', ['type x:', 'key Return', 'type y'], exts=root,
+                             extra=['print-langconf'])
+        self.assertEqual(doc, 'x:\ny')
+        self.assertIn('colon_indent=no source=user', out)
+        self.assertIn('ident=$ source=user', out)
 
     def test_a_grammar_extension_with_its_language_keys(self):
         # the Teal workflow: an extension's grammar (syntax/teal.syn) and its [language.Teal] keys

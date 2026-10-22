@@ -26,6 +26,10 @@ ln_nedits: .quad 0
 ln_edits: .zero DBE_SIZE*DOC_BATCH_EDITS_MAX
 ln_pairs: .zero DMP_SIZE*LN_MAX
 ln_text: .zero SB_SIZE          # the edits' bytes; DBE_text holds an offset into it until ln_apply
+lbk_s: .quad 0                  # lines_block_comment: START and END of the block comment
+lbk_sl: .quad 0
+lbk_e: .quad 0
+lbk_el: .quad 0
 
 .text
 
@@ -537,8 +541,11 @@ FN lines_comment
     mov rdi, rbx
     call lc_line_comment        # the language configuration's (langconf.s)
     test rdx, rdx
-    jz .Lco_ret
-    mov [rsp], rax              # token
+    jnz 1f
+    mov rdi, rbx                # none (HTML, XML): the block comment around each block of lines
+    call lines_block_comment
+    jmp .Lco_ret
+1:  mov [rsp], rax              # token
     mov [rsp + 8], rdx
     mov rdi, rbx
     xor esi, esi
@@ -695,6 +702,251 @@ FN lines_comment
     lea rdi, [rip + ln_text]
     call sb_free
 .Lco_ret:
+    EPILOGUE
+
+# lines_block_comment(doc): Toggle Comment at several selections without a line comment: the
+#   block comment's START before each block of selected lines (at its first line's indentation)
+#   and END after it (before trailing blanks), or off every block when all have them; one undo
+#   step, as block_comment (editor.s) does for one selection
+lines_block_comment:
+    PROLOGUE 32
+    mov rbx, rdi
+    call lc_block_comment
+    test rdx, rdx
+    jz .Lbk_ret
+    mov [rip + lbk_s], rax
+    mov [rip + lbk_sl], rdx
+    mov [rip + lbk_e], rcx
+    mov [rip + lbk_el], r8
+    mov rdi, rbx
+    xor esi, esi
+    call ln_gather
+    # "START " at 0 and " END" after it: the bytes of every insertion
+    lea rdi, [rip + ln_text]
+    mov rsi, [rip + lbk_s]
+    mov rdx, [rip + lbk_sl]
+    call sb_push
+    lea rdi, [rip + ln_text]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ln_text]
+    mov esi, ' '
+    call sb_push_byte
+    lea rdi, [rip + ln_text]
+    mov rsi, [rip + lbk_e]
+    mov rdx, [rip + lbk_el]
+    call sb_push
+    # every block with text commented already: off
+    mov dword ptr [rsp], 1      # all
+    mov dword ptr [rsp + 4], 0  # blocks with text
+    xor r12d, r12d
+1:  cmp r12, [rip + ln_nblocks]
+    jae 3f
+    mov rdi, rbx
+    mov rsi, r12
+    call lbk_span
+    inc r12
+    cmp rdx, rax
+    jbe 1b
+    inc dword ptr [rsp + 4]
+    mov rdi, rbx
+    mov rsi, rax
+    call lbk_wrapped
+    test eax, eax
+    jnz 1b
+    mov dword ptr [rsp], 0
+    jmp 1b
+3:  cmp dword ptr [rsp + 4], 0
+    je .Lbk_free
+    xor r12d, r12d
+4:  cmp r12, [rip + ln_nblocks]
+    jae .Lbk_pairs
+    mov rdi, rbx
+    mov rsi, r12
+    call lbk_span
+    inc r12
+    cmp rdx, rax
+    jbe 4b
+    mov r14, rax                # a
+    mov r15, rdx                # b
+    cmp dword ptr [rsp], 0
+    je 7f
+    # off: START and a blank after it, then a blank before END and END
+    mov r13, r14
+    add r13, [rip + lbk_sl]     # START's end
+    mov rax, r15
+    sub rax, [rip + lbk_el]
+    mov [rsp + 8], rax          # END's start
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_byte
+    cmp eax, ' '
+    jne 5f
+    lea rax, [r13 + 1]
+    cmp rax, [rsp + 8]
+    ja 5f
+    inc r13
+5:  mov rax, [rsp + 8]
+    cmp rax, r13
+    jbe 6f
+    mov rdi, rbx
+    lea rsi, [rax - 1]
+    call doc_byte
+    cmp eax, ' '
+    jne 6f
+    dec qword ptr [rsp + 8]
+6:  mov rdi, r14
+    mov rsi, r13
+    xor edx, edx
+    xor ecx, ecx
+    call ln_edit
+    test eax, eax
+    jz .Lbk_limit
+    mov rdi, [rsp + 8]
+    mov rsi, r15
+    xor edx, edx
+    xor ecx, ecx
+    call ln_edit
+    test eax, eax
+    jz .Lbk_limit
+    jmp 4b
+7:  # on: "START " at a, " END" at b
+    mov rdi, r14
+    mov rsi, r14
+    xor edx, edx
+    mov rcx, [rip + lbk_sl]
+    inc rcx
+    call ln_edit
+    test eax, eax
+    jz .Lbk_limit
+    mov rdi, r15
+    mov rsi, r15
+    mov rdx, [rip + lbk_sl]
+    inc rdx
+    mov rcx, [rip + lbk_el]
+    inc rcx
+    call ln_edit
+    test eax, eax
+    jz .Lbk_limit
+    jmp 4b
+.Lbk_pairs:
+    cmp qword ptr [rip + ln_nedits], 0
+    je .Lbk_free
+    xor r12d, r12d
+8:  cmp r12, [rip + ln_n]
+    jae 9f
+    imul r13, r12, LS_SIZE
+    lea rax, [rip + ln_sels]
+    add r13, rax
+    mov rdi, [r13 + LS_cur]
+    call ln_map
+    mov r14, rax
+    mov rdi, [r13 + LS_anchor]
+    call ln_map
+    mov rdx, rax
+    mov rsi, r14
+    mov rdi, r12
+    call ln_pair
+    inc r12
+    jmp 8b
+9:  mov rdi, rbx
+    mov rsi, [rip + ln_n]
+    call ln_apply
+    jmp .Lbk_free
+.Lbk_limit:
+    call lines_limit
+.Lbk_free:
+    lea rdi, [rip + ln_text]
+    call sb_free
+.Lbk_ret:
+    EPILOGUE
+
+# lbk_span(doc, block) -> rax its first line's text start (after the indentation), rdx its last
+#   line's end before trailing blanks (rdx <= rax: no text)
+lbk_span:
+    PROLOGUE
+    mov rbx, rdi
+    mov rax, rsi
+    shl rax, 4
+    lea rcx, [rip + ln_blocks]
+    mov r12, [rcx + rax]
+    mov r13, [rcx + rax + 8]
+    mov rdi, rbx
+    mov rsi, r12
+    call line_indent
+    mov r14, rax
+    mov rdi, rbx
+    mov rsi, r12
+    call doc_line_start
+    add r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_line_end
+    mov r15, rax
+1:  cmp r15, r14
+    jbe 3f
+    mov rdi, rbx
+    lea rsi, [r15 - 1]
+    call doc_byte
+    cmp eax, ' '
+    je 2f
+    cmp eax, 9
+    jne 3f
+2:  dec r15
+    jmp 1b
+3:  mov rax, r14
+    mov rdx, r15
+    EPILOGUE
+
+# lbk_wrapped(doc, a, b) -> eax 1 when START is at a and END ends at b, apart
+lbk_wrapped:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov rax, r13
+    sub rax, r12
+    mov rcx, [rip + lbk_sl]
+    add rcx, [rip + lbk_el]
+    cmp rax, rcx
+    jb 8f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, [rip + lbk_s]
+    mov rcx, [rip + lbk_sl]
+    call lbk_has
+    test eax, eax
+    jz 8f
+    mov rdi, rbx
+    mov rsi, r13
+    sub rsi, [rip + lbk_el]
+    mov rdx, [rip + lbk_e]
+    mov rcx, [rip + lbk_el]
+    call lbk_has
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# lbk_has(doc, pos, ptr, len) -> eax 1 when the document has those bytes at pos
+lbk_has:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    xor r15d, r15d
+1:  cmp r15, r14
+    jae 2f
+    mov rdi, rbx
+    lea rsi, [r12 + r15]
+    call doc_byte
+    cmp al, [r13 + r15]
+    jne 8f
+    inc r15
+    jmp 1b
+2:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 # Insert Line Above: an empty line above each caret's line with that line's indentation (a level

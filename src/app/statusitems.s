@@ -863,6 +863,77 @@ si_u32:
     xor edx, edx
     ret
 
+# FN status_page_rows(ext): the extension page's Status bar rows (contribpage.s): each item it
+#   declares or sets (v1's text aside), its text as written; its side, priority, command, clause
+FN status_page_rows
+    PROLOGUE 16
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + si_items + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call si_at
+    mov r12, rax
+    inc rbx
+    cmp [r12 + SI_ext], r15
+    jne 1b
+    test dword ptr [r12 + SI_flags], SIF_V1
+    jnz 1b
+    mov rdi, [r12 + SI_text]
+    test rdi, rdi
+    jz 2f
+    cmp byte ptr [rdi], 0
+    jne 3f
+2:  mov rdi, [r12 + SI_name]
+3:  call contrib_page_text
+    lea rdi, [rip + .Lsp_right]
+    cmp dword ptr [r12 + SI_align], 0
+    je 4f
+    lea rdi, [rip + .Lsp_left]
+4:  call contrib_page_detail
+    call contrib_page_part
+    lea rdi, [rip + .Lsp_priority]
+    call contrib_page_detail
+    movsxd rdi, dword ptr [r12 + SI_prio]
+    call contrib_page_detail_int
+    mov rdi, [r12 + SI_cname]
+    test rdi, rdi
+    jz 5f
+    mov r13, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lsp_runs]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+5:  test dword ptr [r12 + SI_flags], SIF_BAD
+    jz 6f
+    call contrib_page_part
+    lea rdi, [rip + .Lsp_bad_when]
+    call contrib_page_detail
+    mov edi, 1
+    call contrib_page_tone
+    jmp 7f
+6:  mov rdi, [r12 + SI_when]
+    test rdi, rdi
+    jz 7f
+    call when_source
+    mov r13, rax
+    mov [rsp], rdx
+    call contrib_page_part
+    lea rdi, [rip + .Lsp_when]
+    call contrib_page_detail
+    mov rdi, r13
+    mov rsi, [rsp]
+    call contrib_page_detail_n
+7:  test dword ptr [r12 + SI_flags], SIF_MANIFEST
+    jnz 8f
+    call contrib_page_part
+    lea rdi, [rip + .Lsp_runtime]
+    call contrib_page_detail
+8:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 # si_line_ok(ptr, len) -> eax 1 for one line of UTF-8 without control characters
 si_line_ok:
     xor ecx, ecx
@@ -1574,3 +1645,10 @@ color_names: .quad .Lc_fg, T_FG, .Lc_muted, T_MUTED, .Lc_accent, T_ACCENT, .Lc_e
 .Ld_command: .asciz " command="
 .Ld_shown: .asciz " shown="
 .Ld_at: .asciz " at="
+.Lsp_right: .asciz "right"
+.Lsp_left: .asciz "left"
+.Lsp_priority: .asciz "priority "
+.Lsp_runs: .asciz "runs "
+.Lsp_bad_when: .asciz "its when clause does not compile"
+.Lsp_when: .asciz "when "
+.Lsp_runtime: .asciz "set while it runs"

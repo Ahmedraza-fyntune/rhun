@@ -48,7 +48,7 @@ ol_ask_doc: .quad 0             # what it asks about
 ol_ask_version: .quad 0
 ol_ask_lang: .quad 0
 ol_has: .long 0                 # 1: rows of a document; 2: it has no provider
-ol_curline: .long 0             # the cursor's line the tree's cursor was set for
+ol_curpos: .quad 0              # the cursor's position the tree's cursor was set for
 ol_curdoc: .quad 0
 ol_syms: .zero VEC_SIZE         # OLS records
 ol_top: .long 0                 # the first top-level symbol, -1 for none
@@ -126,7 +126,16 @@ FN outline_tick
     cmp rax, [rip + ol_lang]
     jne 2f
     jmp 6f
-2:  call time_ms                # another document: at once
+2:  mov rax, [rbx + DOC_id]     # another document: its rows go now (they name the other's
+    cmp rax, [rip + ol_doc]     # places), asked at once
+    je 21f
+    mov qword ptr [rip + ol_syms + VEC_len], 0
+    mov dword ptr [rip + ol_has], 0
+    mov qword ptr [rip + ol_curdoc], 0
+    mov rdi, [rip + ol_tree]
+    call tree_clear
+    mov dword ptr [rip + g_dirty], 1
+21: call time_ms
     mov [rip + ol_due], rax
     jmp 4f
 3:  cmp qword ptr [rip + ol_due], 0
@@ -162,7 +171,14 @@ FN outline_timeout
     jne 8f
     push rax
     push rax
-    call time_ms
+    mov edi, [rip + ol_place]   # not on screen: the tick does not ask, so nothing is due (it
+    call place_visible          # asks when the section shows again)
+    test eax, eax
+    jnz 2f
+    pop rax
+    pop rax
+    jmp 8f
+2:  call time_ms
     pop rcx
     pop rcx
     sub rcx, rax
@@ -277,7 +293,7 @@ FN outline_reply
     jmp 7f
 1:  mov dword ptr [rip + ol_has], 1
     call build
-    mov dword ptr [rip + ol_curline], -1     # the cursor's row again
+    mov qword ptr [rip + ol_curpos], -1      # the cursor's row again
 7:  mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     EPILOGUE
@@ -640,11 +656,12 @@ follow:
     call lf_line_col
     mov r12, rax                # the cursor's line and column
     mov r13, rdx
-    cmp r12d, [rip + ol_curline]
+    mov rax, [rbx + DOC_cur]
+    cmp rax, [rip + ol_curpos]
     jne 1f
     cmp rbx, [rip + ol_curdoc]
     je 9f
-1:  mov [rip + ol_curline], r12d
+1:  mov [rip + ol_curpos], rax
     mov [rip + ol_curdoc], rbx
     mov r14, -1                 # the innermost one around the cursor
     mov r15, -1                 # the last one starting before it

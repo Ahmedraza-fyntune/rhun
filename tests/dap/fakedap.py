@@ -18,14 +18,17 @@ one, a stop names the step's thread, other threads show one waiting frame, and c
 and pause fail for a thread that is not alive. lldb-threads leaves a worker thread out of the
 threads answer at its first stop (as lldb-dap does); single-continue answers continue with
 allThreadsContinued false; a stopped step's "threadStarted": N and "continuedOther": N send those
-events while paused. Standard library only; run with -I."""
+events while paused. --mode MODES adds to FAKEDAP_MODE. Standard library only; run with -I."""
 import json
 import os
 import sys
 import time
 
 MODE = {}
-for part in os.environ.get('FAKEDAP_MODE', '').split(','):
+_modes = os.environ.get('FAKEDAP_MODE', '')
+if '--mode' in sys.argv:        # where the environment does not reach (a remote host): the argument
+    _modes += ',' + sys.argv[sys.argv.index('--mode') + 1]
+for part in _modes.split(','):
     part = part.strip()
     if not part:
         continue

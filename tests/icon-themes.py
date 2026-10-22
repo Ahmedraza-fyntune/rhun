@@ -126,6 +126,15 @@ class IconThemes(contribhost.Contrib):
         colors = host.ppm_colors(shot)
         self.assertIn((255, 0, 0), colors)        # the rust PNG, as it is
 
+    def test_a_huge_theme_file_is_refused_unread(self):
+        # a sparse gigabyte: refused by its size before any of it is read (ITH_FILE_MAX)
+        exts = self.exts()
+        with open(exts / 'alice/demo/icon-themes/huge.icons', 'wb') as f:
+            f.truncate(1 << 30)
+        self.assertEqual(self.lookups(['main.rs'], exts=exts), ['icon=theme:alice/demo/minimal:rust'])
+        self.icons('alice/demo/huge')
+        self.assertEqual(self.lookups(['main.rs'], exts=exts), ['icon=rhun:rust color=orange'])
+
     def test_select_file_icon_theme_previews(self):
         exts = self.exts()
         self.icons(None)

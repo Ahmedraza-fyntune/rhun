@@ -583,6 +583,110 @@ mi_command:
     call ext_cmd_local
     EPILOGUE
 
+# FN menu_page_rows(ext): the extension page's Menus rows (contribpage.s): each item,
+#   "LOCATION: TITLE" ("submenu NAME: ..." inside one; a submenu's title with " >"), and its
+#   command when that is not one rhun knows now, its group, its clause
+FN menu_page_rows
+    PROLOGUE 16
+    mov r15, rdi
+    call mi_vec
+    test rax, rax
+    jz 9f
+    mov rbx, rax
+    xor r12d, r12d
+1:  cmp r12, [rbx + VEC_len]
+    jae 9f
+    imul r13, r12, MI_SIZE
+    add r13, [rbx + VEC_ptr]
+    inc r12
+    # where
+    mov eax, [r13 + MI_loc]
+    cmp eax, MLOC_SUB
+    jne 2f
+    lea rdi, [rip + .Lp_submenu]
+    call contrib_page_text
+    mov rdi, [r13 + MI_parent]
+    test rdi, rdi
+    jz 3f
+    call contrib_page_text
+    jmp 3f
+2:  dec eax
+    cmp eax, MLOC_SCM_TITLE
+    jae 3f
+    lea rcx, [rip + loc_names]
+    mov rdi, [rcx + rax*8]
+    call contrib_page_text
+3:  lea rdi, [rip + .Lp_colon]
+    call contrib_page_text
+    # what
+    mov rdi, [r13 + MI_sub]
+    test rdi, rdi
+    jz 4f
+    mov rsi, rdi
+    mov rdi, r15
+    call sm_find
+    mov rdi, [r13 + MI_sub]
+    test rax, rax
+    jz 31f
+    mov rcx, [rax + SM_title]
+    test rcx, rcx
+    jz 31f
+    mov rdi, rcx
+31: call contrib_page_text
+    lea rdi, [rip + .Lp_more]
+    call contrib_page_text
+    jmp 5f
+4:  mov rdi, r15
+    mov rsi, r13
+    call mi_command
+    test rax, rax
+    jz 41f
+    mov rdi, [rax + CMD_title]
+    call contrib_page_title
+    jmp 5f
+41: mov rdi, [r13 + MI_cmd]     # one it registers while it runs, or none
+    test rdi, rdi
+    jnz 42f
+    mov rdi, [r13 + MI_name]
+42: mov r14, rdi
+    call contrib_page_text
+    lea rdi, [rip + .Lp_runs]
+    call contrib_page_detail
+    mov rdi, r14
+    call contrib_page_detail
+5:  mov rdi, [r13 + MI_group]
+    test rdi, rdi
+    jz 6f
+    mov r14, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lp_group]
+    call contrib_page_detail
+    mov rdi, r14
+    call contrib_page_detail
+6:  cmp dword ptr [r13 + MI_bad], 0
+    je 61f
+    call contrib_page_part
+    lea rdi, [rip + .Lp_bad_when]
+    call contrib_page_detail
+    mov edi, 1
+    call contrib_page_tone
+    jmp 7f
+61: mov rdi, [r13 + MI_when]
+    test rdi, rdi
+    jz 7f
+    call when_source
+    mov r14, rax
+    mov [rsp], rdx
+    call contrib_page_part
+    lea rdi, [rip + .Lp_when]
+    call contrib_page_detail
+    mov rdi, r14
+    mov rsi, [rsp]
+    call contrib_page_detail_n
+7:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 # mn_push(label, handler, kind, ext, mi): one more row
 mn_push:
     mov rax, [rip + mn_count]
@@ -2050,6 +2154,13 @@ scm_kinds: .quad 0, .Lks_commit, .Lks_commit, .Lks_resource, .Lks_group
 # ITEM.FIELD: the field's offset in MI, -1 order (a number), -2 when (a clause)
 mi_fields: .quad .Lf_command, MI_cmd, .Lf_group, MI_group, .Lf_order, -1, .Lf_when, -2
     .quad .Lf_args, MI_args, .Lf_submenu, MI_sub, 0, 0
+.Lp_submenu: .asciz "submenu "
+.Lp_colon: .asciz ": "
+.Lp_more: .asciz " >"
+.Lp_runs: .asciz "runs "
+.Lp_group: .asciz "group "
+.Lp_bad_when: .asciz "its when clause does not compile"
+.Lp_when: .asciz "when "
 .Ll_editor: .asciz "editor"
 .Ll_explorer: .asciz "explorer"
 .Ll_tab: .asciz "tab"
