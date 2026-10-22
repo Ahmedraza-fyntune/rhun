@@ -146,6 +146,34 @@ class ContribPage(contribhost.Contrib):
         self.assertTrue(all(p.startswith('row error ') for p in problems), problems)
         self.assertTrue(any('nowhere' in p for p in problems), problems)
 
+    def test_rows_past_the_room_end_with_how_many_more(self):
+        # 200 settings with long keys fill the text room before the rows run out; each key length
+        # leaves a different remainder, some too small for the notice itself
+        root = self.work / 'many'
+        lengths = range(130, 250)
+        for n in lengths:
+            keys = ['k%03d_' % i + 'x' * (n - 5) for i in range(200)]
+            self.make_ext(root, name='m%d' % n, extra='[settings]\n' + ''.join(k + '.type = string\n' for k in keys))
+        out = self.run_editor(exts=root, files=(), drop_waits=True,
+                              actions=['print-ext-page-contributions alice/m%d' % n for n in lengths])
+        pages, cur = [], None
+        for l in out:
+            if l == 'head Commands':
+                cur = []
+                pages.append(cur)
+            if cur is not None and l.startswith(('head ', 'row ')):
+                cur.append(l)
+        self.assertEqual(len(pages), len(lengths))
+        cut = 0
+        for n, rows in zip(lengths, pages):
+            shown = sum(1 for r in rows if r.startswith('row plain k'))
+            more = 0
+            if rows[-1].startswith('row plain and ') and rows[-1].endswith(' more'):
+                more = int(rows[-1].split()[3])
+                cut += 1
+            self.assertEqual(shown + more, 200, (n, shown, rows[-1][:40]))
+        self.assertGreater(cut, 10)                     # most lengths do not fit
+
     def test_the_page_draws_it(self):
         shot = self.work / 'page.ppm'
         out = self.run_editor(exts=self.exts(), files=(), drop_waits=True, actions=[
