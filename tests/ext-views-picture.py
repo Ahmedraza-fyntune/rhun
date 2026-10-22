@@ -88,7 +88,7 @@ class Pictures(ViewsBase):
     def test_an_image_by_handle_is_drawn_and_goes(self):
         x, y = self.shown()
         shot = self.work / 'shot.ppm'
-        out = self.run_editor(['view-show pic', 'wait 300', 'cmd viewfake.img', 'wait 400', f'shot {shot}',
+        out = self.run_editor(['view-show pic', 'wait 300', 'cmd viewfake.img', 'wait 400', f'shot {shot.as_posix()}',
                                'cmd viewfake.unimg', 'wait 300'])
         data = shot.read_bytes()
         # P6 header: "P6\nW H\n255\n"
