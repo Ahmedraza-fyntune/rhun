@@ -1030,7 +1030,10 @@ FN iconth_page_rows
     mov rdi, [r12 + ITH_icons + VEC_len]
     call contrib_page_detail_int
     lea rdi, [rip + .Lpg_icons]
-    call contrib_page_detail
+    cmp qword ptr [r12 + ITH_icons + VEC_len], 1
+    jne 31f
+    lea rdi, [rip + .Lpg_icon]
+31: call contrib_page_detail
     mov rdi, [rip + cfg_file_icons]
     test rdi, rdi
     jz 4f
@@ -1074,4 +1077,5 @@ map_secs: .quad .Ls_files, .Ls_exts, .Ls_langs, .Ls_folders, .Ls_folders_open, 0
 .Lp_rhun_folder: .asciz "rhun:folder color=accent"
 .Lp_color: .asciz " color="
 .Lpg_icons: .asciz " icons"
+.Lpg_icon: .asciz " icon"
 .Lpg_in_use: .asciz "in use"
