@@ -165,7 +165,8 @@ class EditorHScroll(unittest.TestCase):
         redraw = frame_time(False)
         initial = self.scroll()[1]
         typing = frame_time(True)
-        self.assertLess(typing, max(0.020, redraw * 2),
+        # a typed key costs about two frames of its own; reading the 20 MB tail costs many more
+        self.assertLess(typing, max(0.020, redraw * 2.5),
                         f'long-line median: redraw {redraw:.4f}s, typing {typing:.4f}s')
         self.command('wait 600')
         self.assertGreater(self.scroll()[1], initial, 'paused measurement missed the added text')

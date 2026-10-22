@@ -590,7 +590,7 @@ spawn_job:
     test rax, rax
     jle 8f
     jmp 4f
-.endif
+.else
     # argv: sh -c SCRIPT rhun-install OWNER NAME TARGET ROOT BASE TAG WANT FILE KIND
     lea rax, [rip + .Lsh]
     mov [rsp], rax
@@ -627,6 +627,7 @@ spawn_job:
     call run_piped
     test rax, rax
     jle 8f
+.endif
 4:  mov [rip + in_pid], eax
     mov [rip + in_fd], edx
     lea rdi, [rip + in_out]
@@ -2456,72 +2457,8 @@ remove_commit:
 .Lei_text: .asciz "Text"
 .Lei_encoded: .asciz "-EncodedCommand"
 .endif
-# the job: fixed text; its arguments come as $1..$9 (github: OWNER NAME, a TAG or "latest", the
-# index's digest or "-"; archive and folder: the FILE). Base https: redirects stay https. The last
-# line is "ok SHA256 TAG DIR", or why it failed
-.globl install_script          # remote hosts: an extension's Linux build fetched for a host (remoteext.s)
-install_script:
-    .ascii "set -u\n"
-    .ascii "owner=$1 name=$2 target=$3 root=$4 base=$5 tag=$6 want=$7 file=$8 kind=$9\n"
-    .ascii "export COPYFILE_DISABLE=1\n"
-    .ascii "mkdir -p \"$root\" || { echo \"cannot create $root\"; exit 1; }\n"
-    .ascii "tmp=$(mktemp -d \"$root/.install-XXXXXX\") || { echo \"cannot create a folder in $root\"; exit 1; }\n"
-    .ascii "fail() { rm -rf \"$tmp\"; echo \"$1\"; exit 1; }\n"
-    .ascii "proto=; case $base in https:*) proto='--proto =https --proto-redir =https' ;; esac\n"
-    .ascii "curl=; command -v curl >/dev/null 2>&1 && curl=1\n"
-    .ascii "get() {\n"
-    .ascii "  if [ -n \"$curl\" ]; then curl -fsSL $proto --max-time 120 --max-filesize 67108864 -o \"$2\" \"$1\"\n"
-    .ascii "  elif command -v wget >/dev/null 2>&1; then wget -q -T 120 -O \"$2\" \"$1\"\n"
-    .ascii "  else fail \"neither curl nor wget is installed\"; fi\n"
-    .ascii "}\n"
-    .ascii "where() {\n"
-    .ascii "  if [ -n \"$curl\" ]; then curl -fsS $proto -o /dev/null --max-time 20 -w '%{redirect_url}' \"$1\"\n"
-    .ascii "  else wget -S --max-redirect=0 -T 20 -O /dev/null \"$1\" 2>&1 | sed -n 's/^ *[Ll]ocation: *//p' | tr -d '\\r' | head -n 1; fi\n"
-    .ascii "}\n"
-    .ascii "sums() { awk -v f=\"$2\" '$2 == f || $2 == \"*\" f { print $1 }' \"$1\"; }\n"
-    .ascii "what=archive wantsum=\n"
-    .ascii "case $kind in\n"
-    .ascii "github)\n"
-    .ascii "  if [ \"$tag\" = latest ]; then\n"
-    .ascii "    case $base in\n"
-    .ascii "    file:*) url=$base/$owner/$name/releases/latest/download ;;\n"
-    .ascii "    *) loc=$(where \"$base/$owner/$name/releases/latest\") || fail \"no answer from $base\"\n"
-    .ascii "      case $loc in */releases/tag/*) tag=${loc##*/releases/tag/} ;; *) fail \"$owner/$name has no release\" ;; esac\n"
-    .ascii "      case $tag in ''|*[!0-9A-Za-z._-]*) fail \"the latest release has an unusable tag\" ;; esac\n"
-    .ascii "      url=$base/$owner/$name/releases/download/$tag ;;\n"
-    .ascii "    esac\n"
-    .ascii "  else url=$base/$owner/$name/releases/download/$tag; fi\n"
-    .ascii "  asset=$name-$target.tar.gz\n"
-    .ascii "  get \"$url/$asset\" \"$tmp/a.tgz\" || { [ \"$tag\" = latest ] && fail \"no release of $owner/$name for $target\"; fail \"no release $tag of $owner/$name for $target\"; }\n"
-    .ascii "  get \"$url/sha256sums.txt\" \"$tmp/sums\" || fail \"the release has no sha256sums.txt\"\n"
-    .ascii "  wantsum=$(sums \"$tmp/sums\" \"$asset\")\n"
-    .ascii "  [ -n \"$wantsum\" ] || fail \"the release's sha256sums.txt does not list $asset\" ;;\n"
-    .ascii "archive)\n"
-    .ascii "  asset=${file##*/}\n"
-    .ascii "  cp \"$file\" \"$tmp/a.tgz\" 2>/dev/null || fail \"cannot read $file\"\n"
-    .ascii "  if [ -f \"${file%/*}/sha256sums.txt\" ]; then\n"
-    .ascii "    wantsum=$(sums \"${file%/*}/sha256sums.txt\" \"$asset\")\n"
-    .ascii "    [ -n \"$wantsum\" ] || fail \"the sha256sums.txt beside it does not list $asset\"\n"
-    .ascii "  fi ;;\n"
-    .ascii "folder)\n"
-    .ascii "  what=folder\n"
-    .ascii "  [ -f \"$file/extension.ini\" ] || fail \"the folder has no extension.ini\"\n"
-    .ascii "  tar -czf \"$tmp/a.tgz\" -C \"$file\" . 2>/dev/null || fail \"the folder cannot be read\" ;;\n"
-    .ascii "*) fail \"unknown source\" ;;\n"
-    .ascii "esac\n"
-    .ascii "if command -v sha256sum >/dev/null 2>&1; then have=$(sha256sum \"$tmp/a.tgz\"); else have=$(shasum -a 256 \"$tmp/a.tgz\"); fi\n"
-    .ascii "have=${have%% *}\n"
-    .ascii "[ -z \"$wantsum\" ] || [ \"$wantsum\" = \"$have\" ] || fail \"the download does not match its checksum\"\n"
-    .ascii "[ \"$want\" = - ] || [ \"$want\" = \"$have\" ] || fail \"the download is not the version the rhun extensions index reviewed\"\n"
-    .ascii "tar -tvzf \"$tmp/a.tgz\" > \"$tmp/list\" 2>/dev/null || fail \"the $what cannot be read\"\n"
-    .ascii "grep -q '^[^-d]' \"$tmp/list\" && fail \"the $what holds links or devices\"\n"
-    .ascii "tar -tzf \"$tmp/a.tgz\" | grep -Eq '(^/|(^|/)[.][.](/|$))' && fail \"the $what reaches outside itself\"\n"
-    .ascii "size=$(awk '{ s += ($2 ~ /\\//) ? $3 : $5 } END { printf \"%.0f\", s }' \"$tmp/list\")\n"
-    .ascii "[ \"$size\" -le 67108864 ] 2>/dev/null || fail \"the $what unpacks to more than 64 MB\"\n"
-    .ascii "mkdir \"$tmp/x\" && tar -xzf \"$tmp/a.tgz\" -C \"$tmp/x\" 2>/dev/null || fail \"the $what cannot be unpacked\"\n"
-    .ascii "[ -f \"$tmp/x/extension.ini\" ] || fail \"the $what has no extension.ini\"\n"
-    .ascii "rm -f \"$tmp/a.tgz\" \"$tmp/sums\" \"$tmp/list\"\n"
-    .asciz "echo \"ok $have $tag $tmp\"\n"
+# the job: install_script, runtime/jobs/archive.sh and runtime/jobs/extinstall.sh one after the
+# other (tools/gen-assets.sh embeds them), its arguments as $1..$9; on Windows ext_install_script
 
 .bss
 ib_wider: .long 0               # the update being asked about asks for more

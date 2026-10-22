@@ -81,6 +81,7 @@ EXPORTS
     GetFullPathNameW
     GetHandleInformation
     GetConsoleWindow
+    GetConsoleMode
     GetWindowsDirectoryW
     CompareStringOrdinal
     OpenProcess

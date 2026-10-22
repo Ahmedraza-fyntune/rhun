@@ -249,7 +249,7 @@ version may use the old embedded installer, so run this step once after upgradin
 handlers. Later updates refresh registration for installed copies without changing defaults or
 opening Settings. Portable copies stay unregistered unless you explicitly configure them.
 
-Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead.
+Use `rhun` or `rhun.com` from a terminal. Normal launches return the prompt immediately. Use `rhun --wait` when another program needs to wait for the editor. `rhun.com --version`, `--headless`, and `--script` preserve console output. The Unix `--control` socket is not available on Windows; use a script file instead. `rhun new-extension` and `rhun submit-extension` ask their questions as plain lines there (a number or the first letter for a choice) and run their steps in PowerShell with `curl.exe` and `tar.exe` (and `gh.exe` when it is installed).
 
 Settings, themes and grammars live under `%APPDATA%\rhun`; saved sessions live under `%LOCALAPPDATA%\rhun`. `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those parent directories. `HOME` defaults to `%USERPROFILE%`. Session filenames encode drive letters, separators and Windows filename restrictions. A project path whose encoded session filename exceeds 240 bytes opens normally but shows a warning and does not persist a session.
 
@@ -718,7 +718,7 @@ When the system says nothing, the dark theme shows. A configuration from before 
 
 Choose **Turbo Pascal** in the theme picker for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `dark_theme = turbo-pascal` under `[ui]` (or `theme`, with `follow_system = false`).
 
-A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys.
+A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys. Extensions bring themes too (an extension with only themes, grammars or icon themes has no program and never runs); `theme`, `dark_theme` and `light_theme` name one by its file name, as a theme of your own.
 
 ```ini
 name = My Theme
@@ -1245,6 +1245,66 @@ Extension Folder (development)** and **Install Extension from Archive**) install
   checked when there is one.
 
 Archive and folder installs are never checked for updates.
+
+#### New extensions
+
+`rhun new-extension [DIR]` starts an extension of your own from a template. In a terminal it asks
+four things: the name (a manifest name: lowercase letters, digits and dashes; DIR's name by
+default), the owner (your GitHub user or organization; `git config github.user` by default), the
+language (Rust or Go, with the arrow keys or 1 and 2) and whether to add the agent skills (yes by
+default). Ctrl+C stops it and leaves the terminal as it was. Then it downloads the current
+`main` of [template-rust](https://github.com/rhun-editor/template-rust) or
+[template-go](https://github.com/rhun-editor/template-go), checks the archive as an install does
+(no links, nothing outside itself, at most 64 MB) and puts it in DIR, a new or empty folder
+(`./NAME` without one), renamed: `name`, `owner`, `title` and the programs in `extension.ini`,
+the Go module (`github.com/OWNER/NAME`) or the Cargo package, the headless test's script and
+expected output, and the README's title. With the skills, the `rhun-extension` skill from
+[rhun-editor/skills](https://github.com/rhun-editor/skills) goes into `.claude/skills/` (Claude
+Code) and `.agents/skills/` (Codex); without them the template keeps its own copy in
+`.claude/skills/`. Last it runs `git init` there (no commit) and prints the next steps: build the
+program into `bin/`, `sh tests/run.sh`, then **Link Extension Folder (development)** on the
+folder.
+
+For scripts and agents the answers come as flags, and without a terminal they are needed:
+
+```sh
+rhun new-extension ~/code/word-count --owner octocat --lang go --no-skills
+rhun new-extension --name word-count --owner octocat --lang rust --skills
+rhun new-extension word-count --yes      # owner from git config github.user, Rust, the skills
+```
+
+In rhun, **Extensions: New Extension…** (also **New Extension…** in the Extensions page's Install
+menu) asks the same in five steps, the last one the folder (`~/code/NAME` by default), with Back
+(alt+left) between them. The download runs in the background with a progress card and Cancel;
+when it is done a notification offers **Open Folder** (this window), **New Window** and **Dev
+Install** (Link a Folder on it).
+
+#### Submitting to the index
+
+Once a release is published (tag `vX.Y.Z`, the templates' release workflow), `rhun
+submit-extension [DIR]` (DIR is the extension's folder, the current one by default) proposes it to
+the [rhun extensions index](https://github.com/rhun-editor/extensions). It reads `owner`, `name`
+and `version` from `extension.ini` (the tag is `vVERSION`; `--tag` picks another), the release's
+`sha256sums.txt` and the tag's commit, and asks the category (`languages formatters themes testing
+debugging tools packs other`), keywords and the maintainer (gh's or git's GitHub user by default).
+When the index already lists the extension, its category, keywords and maintainer are the
+defaults and what only the index's maintainers set (`featured`, `rhun`) stays. It warns when
+`.github/workflows/release.yml` does not attest the archives (`actions/attest-build-provenance`):
+the index's check needs that attestation. Then it prints the entry, `OWNER/NAME.ini` as the
+index's files are written (the tag, the commit and a `sha256.TARGET` line per archive), and opens
+the pull request:
+
+- with [gh](https://cli.github.com) installed and logged in, it offers to do it all: a fork of
+  the index, the branch `submit-OWNER-NAME-TAG` with the file, and `gh pr create`;
+- otherwise (or when you say no) it opens GitHub's page for the new file with the entry filled in,
+  which forks the index for you and proposes the change; for an extension already listed, GitHub's
+  editor for its file, where the printed entry replaces the text. The address is printed too.
+
+Without a terminal it takes flags: `--category C --keywords "a b" --maintainer M`, `--gh` for the
+pull request through gh (otherwise the browser), `--yes` for the defaults (`other`, and gh when it
+is logged in). In rhun, **Extensions: Submit to Index…** (and **Submit to Index…** on a linked
+extension's page) asks the folder, then the same questions, with the progress and the result in
+notifications (**Open** for the pull request; **Open Again** and **Copy Entry** for the browser).
 
 `rhun://extension/OWNER/NAME` and `rhun://extension/OWNER/NAME@VERSION` links open the same Add
 dialog (the site's catalog uses them for its Install buttons).

@@ -7,7 +7,7 @@
 .equ ID_XS, 0x7300              # + i*8 + k: a setting's controls (choice options k..)
 .equ ID_XM, 0x5a0000            # extension management: + 1 check, + 2 update all, + 3 update,
                                 #   + 4 what's new, + 5 roll back, + 6 search, + 7 installed,
-                                #   + 8 browse, + 9 refresh; + 0x1000 + i: a card's Update;
+                                #   + 8 browse, + 9 refresh, + 10 submit to index; + 0x1000 + i: a card's Update;
                                 #   + 0x2000 + i: a Browse card's button
 .equ XB_SHOWN, 100              # Browse cards drawn (the search narrows the rest)
 
@@ -578,7 +578,12 @@ draw_detail:
     jz 51f
     EPILOGUE                    # it rolled back: the record shown changed
 51:
-    # resources group: how it runs and what it costs (extres.s)
+    # resources group: how it runs and what it costs (extres.s); nothing for one that never starts
+    # (a pack, a data extension)
+    mov rdi, rbx
+    call ext_never_starts
+    test eax, eax
+    jnz 57f
     lea rsi, [rip + .Ls_resources]
     call section
     xor r12d, r12d
@@ -2003,7 +2008,8 @@ from_github:
 9:  EPILOGUE
 
 # draw_versions(ext) -> eax 1 when Roll back was clicked (the record shown changes): Update to 0.1.2,
-# What's new (its release page) and Roll back to 0.1.0, when they apply
+# What's new (its release page) and Roll back to 0.1.0, when they apply; a linked extension's
+# Submit to Index... (submitext.s)
 draw_versions:
     PROLOGUE
     mov rbx, rdi
@@ -2013,6 +2019,8 @@ draw_versions:
     mov r12, rax
     test r12, r12
     jnz 1f
+    cmp qword ptr [rbx + EXT_inst], 0
+    jne 1f
     cmp qword ptr [rbx + EXT_prev], 0
     je 9f
 1:  mov eax, [rip + xp_x]
@@ -2077,7 +2085,17 @@ draw_versions:
     mov rdi, rbx
     call ext_rollback_ask
     mov r13d, 1
-8:  M eax, MI_40
+8:  cmp qword ptr [rbx + EXT_inst], 0
+    je 81f
+    mov edi, ID_XM + 10
+    lea rsi, [rip + .Lb_submit]
+    xor edx, edx
+    call row_button
+    test eax, UB_CLICK
+    jz 81f
+    mov rdi, [rbx + EXT_dir]
+    call submitext_folder
+81: M eax, MI_40
     add [rip + xp_y], eax
 9:  mov eax, r13d
     EPILOGUE
@@ -2086,16 +2104,19 @@ draw_versions:
 .p2align 3
 install_items:
     .quad .Lm_github, cmd_install_extension, .Lm_folder, cmd_install_extension_folder
-    .quad .Lm_link, cmd_link_extension_folder, .Lm_archive, cmd_install_extension_archive, 0, 0
+    .quad .Lm_link, cmd_link_extension_folder, .Lm_archive, cmd_install_extension_archive
+    .quad .Lm_new, cmd_new_extension, 0, 0
 .Lm_github: .asciz "From GitHub\342\200\246"
 .Lm_folder: .asciz "From a Folder\342\200\246"
 .Lm_link: .asciz "Link a Folder (development)\342\200\246"
 .Lm_archive: .asciz "From an Archive\342\200\246"
+.Lm_new: .asciz "New Extension\342\200\246"
 .Lb_check: .asciz "Check for updates"
 .Lb_update_all: .asciz "Update all"
 .Lb_update_to: .asciz "Update to "
 .Lb_whats_new: .asciz "What's new"
 .Lb_rollback_to: .asciz "Roll back to "
+.Lb_submit: .asciz "Submit to Index\342\200\246"
 .Lt_update_avail: .asciz " update available"
 .Lt_updates_avail: .asciz " updates available"
 .Lt_linked: .asciz "  \302\267  linked to "

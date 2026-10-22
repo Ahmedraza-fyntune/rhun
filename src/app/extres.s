@@ -1129,6 +1129,10 @@ FN extres_page_line
     mov rbx, rdi
     mov r12d, esi
     mov r13, rdx
+    mov rdi, rbx                # a pack or a data extension has no process to describe
+    call ext_never_starts
+    test eax, eax
+    jnz 8f
     mov rdi, rbx
     call extres_row
     test rax, rax
@@ -1514,7 +1518,7 @@ c_print_startup:
     xor eax, eax
     EPILOGUE
 
-# print-ext-page-resources OWNER/NAME: the Resources block's lines, as the page shows them
+# print-ext-resources OWNER/NAME: the Resources block's lines, as the page shows them
 c_print_resources:
     PROLOGUE
     mov rbx, rdi

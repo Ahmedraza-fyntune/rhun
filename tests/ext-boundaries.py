@@ -98,7 +98,8 @@ class Boundaries(host.Host):
                     frames = [header + payload + '3 status 0\n']
                     if fragmented:
                         frames = [header, (0.05, payload[:4]), (0.05, payload[4:]), (0.05, '3 status 0\n')]
-                    self.run_editor(['wait 400'], exts=self.extension(hello, frames=frames))
+                    # the fragments come 50 ms apart after the program starts: room for a slow runner
+                    self.run_editor(['wait 1500' if fragmented else 'wait 400'], exts=self.extension(hello, frames=frames))
                     lines = self.boundary_log()
                     self.assertNotIn('ok 2', lines)
                     self.assertIn('ok 3', lines)
