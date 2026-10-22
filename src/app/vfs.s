@@ -569,7 +569,8 @@ FN vfs_write_all
     jb 3b
     jmp 9f
 32: test rax, rax
-    js 7f                       # made by us (not EEXIST) and not all written: it goes
+    js 9f                       # the agent removes a file it made and could not fill (ragent.s);
+                                #   an answer that never came proves no create, so nothing goes here
     mov rax, [rsp + 8]
     mov [rsp], rax              # written
 4:  mov rax, r13

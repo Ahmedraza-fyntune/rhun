@@ -119,6 +119,13 @@ class Semantic(pres.Base):
         out = self.run_p(self.start() + ['print-classes 2'])
         self.assertEqual([l for l in out if l.startswith('fx ')], ['fx 5-5=1', 'fx 7-7=1'])
 
+    def test_a_column_past_32_bits_keeps_the_next_tokens_lines(self):
+        # the first token's column is past any line (left out); the second is still a line below it
+        self.answer('r1 L1 full 2\n1 4294967296 1 1 0 1 8 1 1 0')
+        out = self.run_p(self.start() + ['print-classes 2', 'print-classes 3'])
+        self.assertIn(f'9-9={C_VARIABLE}', self.classes(out, 3))
+        self.assertNotIn(f'9-9={C_VARIABLE}', self.classes(out, 2))
+
     def test_an_end_inside_a_character_moves_back(self):
         (self.proj / 'u.rs').write_text('a\u00e9z\n', encoding='utf-8')
         self.answer('r1 L1 full 1\n0 0 2 1 0')

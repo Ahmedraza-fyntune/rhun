@@ -263,6 +263,35 @@ class Markdown(ViewsBase):
         self.assertTrue(out[0].startswith('blocks=1 '), out[0])
         self.assertLess(took, 3.0)
 
+    def test_suffixed_slugs_never_collide(self):
+        path = self.work / 'doc.md'
+        path.write_text('# Same\n\n# Same\n\n# Same-1\n', encoding='utf-8')
+        out = self.run_editor([f'md-demo {path}', 'wait 50', 'md-anchor #same', 'md-anchor #same-1',
+                               'md-anchor #same-1-1'], exts=None, start=False)
+        ys = [int(l.split(' ')[2]) for l in out if l.startswith('anchor ')]
+        self.assertTrue(0 == ys[0] < ys[1] < ys[2], ys)                 # GitHub: same, same-1, same-1-1
+
+    def test_anchors_in_a_heading_heavy_document_are_quick(self):
+        import time
+        path = self.work / 'doc.md'
+        path.write_text(''.join(f'# H{i}\n' for i in range(16000)), encoding='utf-8')
+        start = time.monotonic()
+        out = self.run_editor([f'md-demo {path}', 'wait 50', 'md-anchor #h15999', 'md-anchor #h0'], exts=None, start=False)
+        took = time.monotonic() - start
+        ys = [int(l.split(' ')[2]) for l in out if l.startswith('anchor ')]
+        self.assertGreater(ys[0], 0)
+        self.assertEqual(ys[1], 0)
+        self.assertLess(took, 2.0)
+
+    def test_table_cells_do_not_inherit_another_documents_delimiters(self):
+        a, b = self.work / 'a.md', self.work / 'b.md'
+        a.write_text('| x | y |\n|---|---|\n| a | *b c |\n', encoding='utf-8')
+        b.write_text('| x | y |\n|---|---|\n| a | *b*c |\n', encoding='utf-8')
+        out = self.run_editor([f'print-md 400 {a}', f'print-md 400 {b}', f'print-md 400 {b}'], exts=None, start=False)
+        bs = [l for l in out if l.startswith('item text ') and l.endswith(' text=b')]
+        self.assertEqual(len(bs), 2, out)
+        self.assertTrue(all(self.field(l, 'style') == '2' for l in bs), bs)
+
 def self_text(line):
     return line.split(' text=', 1)[1]
 

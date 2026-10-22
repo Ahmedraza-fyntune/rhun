@@ -27,7 +27,7 @@ class Saves(host.Host):
                 time.sleep(.05)
         super().tearDown()
 
-    def formatter(self, mode='ok', delay=0, owners=('alice',), timeout=2000):
+    def formatter(self, mode='ok', delay=0, owners=('alice',), timeout=2000, on='command'):
         config=self.work/'config/rhun/config'
         config.write_text(config.read_text()+f'\n[files]\nformat_on_save = true\nformat_on_save_timeout = {timeout}\n')
         root=self.work/'formatters'
@@ -36,7 +36,7 @@ class Saves(host.Host):
             folder.mkdir(parents=True)
             (folder/'extension.ini').write_text(
                 f'name = format\nowner = {owner}\ntitle = Formatter\nversion = 1\nprotocol = 1\n'
-                'runtime = python3\nrun = main.py\non = command\n[needs]\ndocuments = write\n'
+                f'runtime = python3\nrun = main.py\non = {on}\n[needs]\ndocuments = write\n'
                 '[provides]\nformat = *\n')
             program = r'''
 import sys, time, os
@@ -166,8 +166,10 @@ for raw in sys.stdin.buffer:
         self.assertIn('toast=Saved. Formatting timed out',out)
 
     def test_typing_during_formatting_saves_latest_text(self):
-        out=self.run_editor(['type y','cmd save','wait 100','type z','wait 800','print-state','print-doc'],
-            exts=self.formatter(delay=.5))
+        # the formatter starts with the editor and has time to: started by the save itself, a slow start
+        # under load sent the request after z was typed, and the formatted yz was right too
+        out=self.run_editor(['wait 1500','type y','cmd save','wait 100','type z','wait 800','print-state','print-doc'],
+            exts=self.formatter(delay=.5,on='startup'))
         self.assertEqual((self.proj/'a.txt').read_text(),'yzhello world\nsecond line\n')
         self.assertIn(' dirty=0 ',self.states(out)[0])
 

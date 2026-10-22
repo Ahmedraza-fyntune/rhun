@@ -43,7 +43,7 @@ class Packs(updates.Updates):
         self.pack()
         out = self.ui(['ext-install demo/one', 'wait-install', 'dialog yes', 'wait-ext one running',
                        'ext-install demo/essentials', 'wait-install', 'print-dialog', 'dialog yes', 'wait 300',
-                       'print-toast', 'print-extensions', 'ext-page essentials', 'print-ext-page'])
+                       'print-toast', 'print-extensions', 'ext-page essentials', 'print-ext-page-more'])
         self.assertIn('dialog=Add “Essentials” and 1 extension?', out)
         self.assertIn('text=Version 0.1.0 from github.com/demo/essentials. It can only use its own commands and '
                       'settings.', out)

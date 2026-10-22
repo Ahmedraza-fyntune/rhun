@@ -421,5 +421,23 @@ class Folders(lifecycle.Base):
             shutil.rmtree(short, ignore_errors=True)
 
 
+    def test_reopening_a_workspace_keeps_folder_settings(self):
+        """the same workspace file opened again makes its folders again (new ids): their own settings
+        are read for them at once"""
+        state = self.ext('st', features='scoped-settings')
+        ini = self.root / 'rt/st/extension.ini'
+        ini.write_text(ini.read_text() + '[settings]\nstyle.type = choice\nstyle.options = a b c\nstyle.default = a\n'
+                       'style.scope = folder\n')
+        wsfile = self.work / 'team.rhun-workspace'
+        wsfile.write_text(f'[folders]\npath = {self.app}\npath = {self.lib}\n')
+        (self.lib / '.rhun').mkdir()
+        (self.lib / '.rhun/extensions.ini').write_text('[rt/st]\nsetting.style = b\n')
+        (state / 'args.txt').write_text('setting-get style 4 -\n')
+        out = self.run_ws([wsfile], ['wait-ext st running', 'wait 300', f'open {wsfile.as_posix()}',
+                                     'cmd rt/st.batch', 'wait 500', 'print-folders'])
+        self.assertEqual([x['folder'] for x in self.folders(out)], ['3', '4'], out)
+        self.assertEqual([l[5:] for l in self.reslog('st') if l.startswith('body ')], ['b'])
+
+
 if __name__ == '__main__':
     unittest.main()

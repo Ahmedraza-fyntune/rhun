@@ -2916,6 +2916,7 @@ xp_search: .zero TF_SIZE        # Browse's search
 xp_eb: .zero 128                # an entry's button label
 xp_pv: .zero EXT_SIZE           # an entry's needs, for ext_needs_words
 xp_perm: .zero SB_SIZE          # what an entry can do, in words
+xp_dump_more: .long 0           # extpage_dump adds protocol 1.1's lines (print-ext-page-more)
 
 .text
 # ---------------- extension management: a pack's members ----------------
@@ -3060,7 +3061,9 @@ FN extpage_dump
     mov rbx, [rip + g_xp_detail]
     test rbx, rbx
     jnz .Lxd_detail
-    # extension management: "updates=N" when there are any
+    # extension management: "updates=N" when there are any (print-ext-page-more only)
+    cmp dword ptr [rip + xp_dump_more], 0
+    je 0f
     call extupdate_count
     test eax, eax
     jz 0f
@@ -3110,7 +3113,9 @@ FN extpage_dump
     mov esi, 10
     call sb_push_byte
 51:
-    # "badge=letter|icon|unreadable color=#rrggbb|-"
+    # "badge=letter|icon|unreadable color=#rrggbb|-" (print-ext-page-more only: v1's form is fixed)
+    cmp dword ptr [rip + xp_dump_more], 0
+    je 6f
     mov rdi, rbx
     call ext_icon_state
     lea rsi, [rip + .Ld_badge_letter]
@@ -3149,7 +3154,7 @@ FN extpage_dump
 5:  mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    # permissions, a line each
+6:  # permissions, a line each
     lea rdi, [rip + xp_line]
     call sb_clear
     mov rdi, rbx
@@ -3233,6 +3238,9 @@ FN extpage_dump
     call sb_push_byte
     jmp 2b
 7: # extension management: a pack's members, "versions update=0.1.2|- previous=0.1.0|-"
+    # (print-ext-page-more only)
+    cmp dword ptr [rip + xp_dump_more], 0
+    je 9f
     call dump_pack
     mov rdi, r12
     lea rsi, [rip + .Ld_versions]
@@ -3258,6 +3266,16 @@ FN extpage_dump
     mov esi, 10
     call sb_push_byte
 9:  EPILOGUE
+
+# extpage_dump_more(sb): print-ext-page-more: print-ext-page's lines (v1.md section 10, unchanged)
+# and, after them, protocol 1.1's: "updates=N" before the list; in the details "badge=… color=…"
+# after held=, and at the end a pack's members and "versions update=… previous=…"
+FN extpage_dump_more
+    PROLOGUE
+    mov dword ptr [rip + xp_dump_more], 1
+    call extpage_dump
+    mov dword ptr [rip + xp_dump_more], 0
+    EPILOGUE
 
 # dump_head(): rbx's "Title version on|off [problem]" onto r12
 dump_head:
