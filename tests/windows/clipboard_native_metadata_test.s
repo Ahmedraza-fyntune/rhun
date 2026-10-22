@@ -27,8 +27,11 @@ wm_line: .ascii "L\n"
 wm_line_result: .ascii "L\nabc"
 wm_raw_result: .ascii "aL\nbc"
 wm_unicode: .byte 0xc3,0xa9,0,0xe6,0xb0,0xb4,0xf0,0x9f,0x98,0x80
+# Windows rejects a class name or wide string at an odd address (ERROR_NOACCESS); Wine accepts it.
+.p2align 1
 wm_fallback: .short 'f','a','l','l','b','a','c','k',0
 wm_fallback_text: .ascii "fallback"
+.p2align 1
 wm_class: .short 'S','T','A','T','I','C',0
 wm_ok: .ascii "ok Windows native clipboard metadata\n"
 .bss
