@@ -718,7 +718,7 @@ When the system says nothing, the dark theme shows. A configuration from before 
 
 Choose **Turbo Pascal** in the theme picker for a blue editor with yellow text, white keywords and the DOS terminal palette. To select it in the configuration file, set `dark_theme = turbo-pascal` under `[ui]` (or `theme`, with `follow_system = false`).
 
-A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys.
+A theme is a `name.theme` file in `~/.config/rhun/themes/`. Colors not given are derived from `bg`, `fg` and `accent`, so a theme can be three lines. See `runtime/themes/` for all keys. Extensions bring themes too (an extension with only themes, grammars or icon themes has no program and never runs); `theme`, `dark_theme` and `light_theme` name one by its file name, as a theme of your own.
 
 ```ini
 name = My Theme

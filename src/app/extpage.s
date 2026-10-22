@@ -578,7 +578,12 @@ draw_detail:
     jz 51f
     EPILOGUE                    # it rolled back: the record shown changed
 51:
-    # resources group: how it runs and what it costs (extres.s)
+    # resources group: how it runs and what it costs (extres.s); nothing for one that never starts
+    # (a pack, a data extension)
+    mov rdi, rbx
+    call ext_never_starts
+    test eax, eax
+    jnz 57f
     lea rsi, [rip + .Ls_resources]
     call section
     xor r12d, r12d

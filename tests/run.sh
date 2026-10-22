@@ -234,6 +234,7 @@ python3 tests/ext-remove-clean.py || fail=1
 python3 tests/ext-dev-install.py || fail=1
 python3 tests/ext-browse.py || fail=1
 python3 tests/ext-packs.py || fail=1
+python3 tests/ext-data.py || fail=1
 # views group: places, retained trees, logs, tabs
 python3 tests/ext-views-tree.py || fail=1
 python3 tests/ext-views-log.py || fail=1

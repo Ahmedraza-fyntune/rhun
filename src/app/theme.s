@@ -8,6 +8,7 @@
 g_theme: .zero 4 * T_COUNT
 g_theme_dark: .long 0
 applied: .long 0                # a theme has been applied
+th_unfound: .long 0             # at startup the theme setting named no theme yet (an extension's?)
 .p2align 3
 pending: .quad 0                # an old config's theme while the system's mode is still unknown
 pending_dark: .quad 0           # and the dark mode's setting before the unknown mode took it
@@ -697,7 +698,8 @@ FN theme_slot_index
     ret
 
 # theme_apply_config(): show the theme the settings name, or the setting's default when rhun has
-# no theme of that name (themes are read once, at startup), as a restart would
+# no theme of that name (themes are read at startup, extensions' after the config: see
+# theme_exts_loaded), as a restart would
 FN theme_apply_config
     PROLOGUE
     call theme_slot
@@ -798,7 +800,7 @@ FN theme_settings_init
     mov rdi, [rip + cfg_theme]
     call theme_find
     test rax, rax
-    js 9f
+    js 8f
     mov rbx, rax
     cmp rax, [rip + g_follow]
     je 3f
@@ -842,7 +844,23 @@ FN theme_settings_init
     lea rdi, [rip + cfg_light_theme]
     mov rsi, rbx
     call theme_set
+    jmp 9f
+8:  mov [rip + th_unfound], r12d # theme_exts_loaded looks again
 9:  EPILOGUE
+
+# theme_exts_loaded(): the extensions' themes are registered (app_init, after ext_init, before the
+# window opens): a theme setting naming one of them applies now, without a frame of the default
+# first. A config from before dark_theme and light_theme whose theme is an extension's gets the
+# settings for it, as for one in the user's themes folder (theme_settings_init)
+FN theme_exts_loaded
+    PROLOGUE
+    cmp dword ptr [rip + th_unfound], 0
+    je 1f
+    mov dword ptr [rip + th_unfound], 0
+    mov edi, 1
+    call theme_settings_init
+1:  call theme_apply_config
+    EPILOGUE
 
 # Toggle Light/Dark Theme: theme becomes light_theme when a dark one shows, otherwise dark_theme.
 # While the theme follows the system it says so instead, as VS Code does.

@@ -155,6 +155,7 @@ FN app_init
     call places_init            # the explorer is the sidebar's first section
     call notify_init            # notification cards take the keyboard through a place item
     call ext_init               # manifests: their commands take keys below
+    call theme_exts_loaded      # and their themes: the one the settings name may be theirs
     call rview_init             # their declared views take their places
     call keys_init
     call vim_sync
