@@ -88,6 +88,8 @@ F CH_grant, 8                   # bytes delivered here and not yet credited back
 F CH_off, 8                     # the delivered part of CH_buf
 F CH_exited_at, 8
 F CH_buf, SB_SIZE               # bytes from the agent not yet delivered
+F CH_cb, 8                      # debugger: remote_sock_connect's cb(ctx, 0 connected | 1 refused), or 0
+F CH_cbctx, 8
 ENDSTRUCT CH_SIZE
 
 .bss
@@ -1200,9 +1202,7 @@ FN remote_disconnect
     sub rsp, 8
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 1f
-    lea rdi, [rip + .Lquit_req]
-    call rm_send_cstr
-    call rm_flush_now
+    call rm_quit_call
     mov dword ptr [rip + rm_ending], 1
     call rm_lost
     mov dword ptr [rip + rm_ending], 0
@@ -1214,18 +1214,36 @@ FN remote_quit
     sub rsp, 8
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 1f
-    lea rdi, [rip + .Lquit_req]
-    call rm_send_cstr
-    call rm_flush_now
+    call rm_quit_call
 1:  add rsp, 8
+    ret
+
+# rm_quit_call(): quit, answered: the agent has the request (and ends its session) before the
+#   transport is killed; one that does not answer within remote_call's wait is killed all the same
+rm_quit_call:
+    sub rsp, 8
+    lea rdi, [rip + .Lv_quit]
+    mov esi, 4
+    xor edx, edx
+    xor ecx, ecx
+    call remote_call
+    add rsp, 8
     ret
 
 # remote_sock_open(fd, port) -> 0 or -errno: a local TCP connection (remotefwd.s accepted it) becomes
 #   a channel to PORT on the host's loopback; the channel owns fd from now on, also on failure
+# remote_sock_connect(fd, port, cb, ctx) -> as remote_sock_open, and cb(ctx, 0 | 1) says whether the
+#   host made the connection (0) or was refused (1; fd is closed then). The debugger's tcp adapters
+#   in a remote window (dapwire.s) [debugger group]
 FN remote_sock_open
-    PROLOGUE
+    xor edx, edx
+    xor ecx, ecx
+FN remote_sock_connect
+    PROLOGUE 16
     mov r12d, edi
     mov r13d, esi
+    mov r15, rdx
+    mov [rsp], rcx
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 7f
     call rm_alloc_chan
@@ -1233,6 +1251,9 @@ FN remote_sock_open
     js 6f
     mov r14d, eax
     mov rbx, rdx
+    mov [rbx + CH_cb], r15
+    mov rax, [rsp]
+    mov [rbx + CH_cbctx], rax
     mov dword ptr [rbx + CH_kind], CK_PROC
     mov [rbx + CH_fd], r12d
     mov dword ptr [rbx + CH_pid], 0
@@ -1271,6 +1292,7 @@ FN remote_sock_open
     EPILOGUE
 5:  mov dword ptr [rbx + CH_kind], 0     # never asked for: forgotten at once
     mov dword ptr [rbx + CH_fd], -1
+    mov qword ptr [rbx + CH_cb], 0
 6:  mov rax, -24
     jmp 8f
 7:  mov rax, -107
@@ -1294,7 +1316,8 @@ rm_on_connected:
     js 1f
     mov rdi, rbx
     call rm_events
-    jmp 9f
+    xor esi, esi
+    jmp 8f
 1:  # refused: as if the host's side had ended at once
     or dword ptr [rbx + CH_flags], CHF_EXITED | CHF_REOF | CHF_LCLOSED
     mov dword ptr [rbx + CH_status], 1
@@ -1302,11 +1325,19 @@ rm_on_connected:
     mov [rbx + CH_exited_at], rax
     mov edi, [rbx + CH_fd]
     test edi, edi
-    js 9f
+    js 7f
     call watch_remove
     mov edi, [rbx + CH_fd]
     SYS SYS_close
     mov dword ptr [rbx + CH_fd], -1
+7:  mov esi, 1
+8:  # remote_sock_connect's caller hears how it went [debugger group]
+    mov rax, [rbx + CH_cb]
+    test rax, rax
+    jz 9f
+    mov qword ptr [rbx + CH_cb], 0
+    mov rdi, [rbx + CH_cbctx]
+    call rax
 9:  EPILOGUE
 
 # rm_send_close(ch): close CH, the agent forgets the channel
@@ -1369,7 +1400,17 @@ FN remote_attach
     call .Lat_number            # FLAGS
     mov r12, rax
     call .Lat_number            # STATUS
-    mov r8, rax
+    push rax
+    push rax
+    xor eax, eax
+    test r14, r14
+    jle 44f
+    cmp byte ptr [r13], ' '
+    jne 44f
+    call .Lat_number            # CFAIL: its child could not confine itself (ragent.s)
+44: mov r9, rax
+    pop r8
+    pop r8
     mov rax, r12
     # the rest of the line
 4:  test r14, r14
@@ -1393,6 +1434,7 @@ FN remote_attach
 43: or dword ptr [rbx + CH_flags], CHF_SEEN
     mov qword ptr [rbx + CH_credit], MUX_WINDOW
     mov qword ptr [rbx + CH_grant], 0
+    mov [rbx + CH_cfail], r9d
     test eax, 1
     jz 42f
     or dword ptr [rbx + CH_flags], CHF_EXITED
@@ -2600,6 +2642,7 @@ rm_alloc_chan:
     mov qword ptr [rdx + CH_grant], 0
     mov qword ptr [rdx + CH_off], 0
     mov qword ptr [rdx + CH_buf + SB_len], 0
+    mov qword ptr [rdx + CH_cb], 0
     ret
 
 # rm_free_chan(CH*): forgotten here (its descriptor already closed or never opened)
@@ -3884,7 +3927,7 @@ rm_rq_ready: .long 0
 .Lv_connect: .asciz "connect "
 .Lrlog_attached: .asciz "attached to session "
 .Lrlog_attach: .asciz "the session has: "
-.Lquit_req: .asciz "0 quit 0\n"
+.Lv_quit: .asciz "quit"
 .p2align 3
 .Lno_extras: .quad 0
 .Lzero_sp: .asciz "0 "

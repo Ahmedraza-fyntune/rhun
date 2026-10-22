@@ -1230,6 +1230,45 @@ int_text:
     mov eax, 1
 9:  ret
 
+# leaf_num(ptr, len) -> eax 1 for a leaf's integer: -?(0|[1-9][0-9]*), not -0, |v| < 2^53 (it goes
+#   into the launch JSON as it is)
+leaf_num:
+    xor eax, eax
+    xor r8d, r8d
+    test rsi, rsi
+    jz 9f
+    cmp byte ptr [rdi], '-'
+    jne 1f
+    mov r8d, 1
+    inc rdi
+    dec rsi
+    jz 9f
+1:  cmp rsi, 16
+    ja 9f
+    cmp byte ptr [rdi], '0'
+    jne 2f
+    cmp rsi, 1
+    jne 9f                      # a leading zero
+    test r8d, r8d
+    jnz 9f                      # -0
+    mov eax, 1
+    ret
+2:  xor r9d, r9d
+3:  movzx ecx, byte ptr [rdi]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja 9f
+    imul r9, r9, 10
+    add r9, rcx
+    inc rdi
+    dec rsi
+    jnz 3b
+    mov rcx, 1 << 53
+    cmp r9, rcx
+    jae 9f
+    mov eax, 1
+9:  ret
+
 # dcfg_path(sb, ptr, len): a path value: ~ is the home, a relative path is inside the project
 FN dcfg_path
     PROLOGUE
@@ -2363,9 +2402,7 @@ FN dcfg_from_leaves
     jne 21f
     mov rdi, [rsp + 48]
     mov rsi, [rsp + 40]
-    cmp rsi, 16                 # |v| < 2^53
-    ja .Lfl_syntax
-    call int_text
+    call leaf_num
     test eax, eax
     jz .Lfl_syntax
     jmp 3f

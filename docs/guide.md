@@ -881,13 +881,14 @@ commands:
 | shift+alt+f | Format Document | with the document's tab width and spaces; with a selection, Format Selection when the extension can |
 
 When the pointer rests on a word, extensions that support it show a **hover card**: the problems
-there first, then what each extension says, wrapped to the card's width; move the pointer onto
-the card to scroll it. A **lightbulb** in the gutter marks a line with a problem that has a quick
+there first, then what each extension says, formatted and wrapped to the card's width; move the
+pointer onto the card to scroll it, drag to select text, and click a link to follow it (with the
+card focused by `ctrl+i`, `ctrl+a` selects all and `ctrl+c` copies). A **lightbulb** in the gutter marks a line with a problem that has a quick
 fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
 references, hierarchies and Find in Files results (`ctrl+Enter` in Find in Files moves its list
 there; the arrows on its title go back and forth, the cross drops one). While extensions are
-still searching its title shows their progress, and **Cancel Language Query** stops them and
-keeps what came;
+still searching its title shows their progress, and **Cancel Language Query** (or Escape in the
+editor) stops them and keeps what came;
 Enter opens a location, Space opens it and stays in the tab, Escape goes back to the editor. In a
 call hierarchy, expanding a row asks for that function's callers; the arrow button switches to
 the functions it calls. The **Outline** section of the sidebar (**Focus Outline**) lists the
@@ -1104,6 +1105,12 @@ the messages and bytes each way, and how many of rhun's questions it answered sl
 with an error. The cards show memory and CPU while an extension runs. An extension whose manifest
 says `idle = stop` is stopped after five minutes without work (its page says so) and starts again
 by itself the next time it is needed.
+
+Its **Contributions** block lists everything it adds: its commands with the key each runs from,
+its key bindings and how each stands (active, overriding a built-in key, shadowed by your own
+`[keys]`, or refused, say a bare letter without a `when` guard), its menu items, status bar
+items, settings, grammars and language keys, file icon themes and views, and, in red, any lines
+of its manifest that were dropped and why.
 
 An extension that signs in to a service keeps its tokens in your system's keychain: the macOS
 Keychain, the Windows Credential Manager, or on Linux the Secret Service (GNOME Keyring, KWallet,
@@ -1402,6 +1409,12 @@ filters (such as Python's "Uncaught Exceptions").
 | lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
 | Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
+reached over TCP (`transport = tcp`, as Delve is) listens on the host's loopback, and the host makes
+the connection there, again until the adapter listens (10 s at most); `server = PORT` (or
+`localhost:PORT`) also means a port on the host. An adapter its extension ships is copied to the
+host with the extension's folder before it starts.
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
 (feature `debug`, docs/extensions/v1.1.md "Debuggers").

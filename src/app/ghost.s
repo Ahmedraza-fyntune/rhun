@@ -3,7 +3,8 @@
 # could follow the caret (`inline-complete DOC VERSION LINE COL typed|invoked`). The first item
 # whose range holds the caret and agrees with the text around it shows: its first line in the
 # `ghost` color after the caret (a VK_GHOST inlay), the others as rows below the line (wrap.s's
-# rows: line_breaks puts them before the next line, lens.s draws them). Tab takes it all (after the
+# rows: line_breaks puts them before the next line, lens.s draws them; after the last line,
+# ghost_tail_draw). Tab takes it all (after the
 # completion list and a snippet's fields), ctrl+Right its next word; typing what it shows keeps it,
 # any other edit or caret move, or Escape, dismisses it.
 .include "rhun.inc"
@@ -166,14 +167,8 @@ ghost_layout:
 11: inc rdx
     dec rbx
     jmp 1b
-2:  # rows below need a next line to sit before
-    mov rax, [rip + gh_line]
-    inc rax
-    mov rdx, [rip + gh_doc]
-    cmp rax, [rdx + DOC_nlines]
-    jb 3f
-    xor ecx, ecx
-3:  mov [rip + gh_rows], rcx
+2:  # (rows below the last line sit after it: ghost_tail_draw)
+    mov [rip + gh_rows], rcx
     mov rdi, [rip + gh_doc]
     call pres_touch
     pop rbx
@@ -231,6 +226,35 @@ FN ghost_rows_before
     cmp rcx, rsi
     jne 9f
     mov rax, [rip + gh_rows]
+9:  ret
+
+# FN ghost_tail_draw(doc, y): below the document's last line (drawn down to y), the ghost's lines
+# after the first when the ghost is on that line (there is no next line to put them before)
+FN ghost_tail_draw
+    cmp [rip + gh_doc], rdi
+    jne 9f
+    cmp qword ptr [rip + gh_rows], 0
+    je 9f
+    mov rax, [rdi + DOC_nlines]
+    dec rax
+    cmp [rip + gh_line], rax
+    jne 9f
+    PROLOGUE
+    mov r12d, esi
+    xor ebx, ebx
+1:  cmp rbx, [rip + gh_rows]
+    jae 8f
+    mov eax, [rip + g_ed_y]
+    add eax, [rip + g_ed_h]
+    cmp r12d, eax
+    jge 8f
+    mov edi, ebx
+    mov esi, r12d
+    call ghost_row_draw
+    add r12d, [rip + g_lh]
+    inc ebx
+    jmp 1b
+8:  EPILOGUE
 9:  ret
 
 # FN ghost_row_draw(row, y): the ghost's line row + 1 (its second line for row 0) at y

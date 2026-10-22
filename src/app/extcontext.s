@@ -658,6 +658,21 @@ FN contrib_problem_count
     mov rax, [rax + VEC_len]
 1:  ret
 
+# FN contrib_problem_at(ext, i) -> rax its problem i (cstr), or 0 (the extension page)
+FN contrib_problem_at
+    push rsi
+    call xp_vec
+    pop rsi
+    test rax, rax
+    jz 1f
+    cmp rsi, [rax + VEC_len]
+    jae 2f
+    mov rax, [rax + VEC_ptr]
+    mov rax, [rax + rsi*8]
+    ret
+2:  xor eax, eax
+1:  ret
+
 # FN contrib_manifest_kv(ext, ini) -> eax 1 when the manifest line was one of the contributions'
 # sections ([context] here; the others as they come)
 FN contrib_manifest_kv

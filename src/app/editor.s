@@ -2428,7 +2428,12 @@ draw_wrapped:
     add r13d, eax
     jmp .Ldw_next
 .Ldw_ret:
-    mov dword ptr [rip + dl_from], 0
+    cmp r12, [rbx + DOC_nlines]   # presentation: past the last line, a ghost's lines below it
+    jb 17f
+    mov rdi, rbx
+    mov esi, r13d
+    call ghost_tail_draw
+17: mov dword ptr [rip + dl_from], 0
     mov dword ptr [rip + dl_to], -1
     mov dword ptr [rip + dl_last], 1
     EPILOGUE

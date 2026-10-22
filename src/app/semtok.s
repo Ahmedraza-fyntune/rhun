@@ -26,7 +26,7 @@ ENDSTRUCT SLG_SIZE
 STRUCT
 F STS_ext, 8                    # the provider the result came from
 F STS_legend, 8                 # the result's legend: its index + 1
-F STS_ints, VEC_SIZE            # u32: the last result's ints, a delta's base
+F STS_ints, VEC_SIZE            # u64: the last result's ints, a delta's base (MODS takes 64 bits)
 F STS_toks, VEC_SIZE            # STK, sorted by start
 F STS_result, 72                # the last result's id, "" for none (no delta asked for)
 ENDSTRUCT STS_SIZE
@@ -614,7 +614,7 @@ FN semtok_reply
     xor eax, eax
     EPILOGUE
 
-# ints_read(rbx cursor, r12 end, r14 count) -> eax 1 when r14 u32 ints were appended to ints_new
+# ints_read(rbx cursor, r12 end, r14 count) -> eax 1 when r14 u64 ints were appended to ints_new
 ints_read:
     push r15
     mov r15, r14
@@ -623,17 +623,14 @@ ints_read:
     call present_num
     test edx, edx
     jz 9f
-    mov rcx, 0xffffffff
-    cmp rax, rcx
-    ja 9f
     push rax
     push rax
     lea rdi, [rip + ints_new]
-    mov esi, 4
+    mov esi, 8
     call vec_push
     pop rcx
     pop rcx
-    mov [rax], ecx
+    mov [rax], rcx
     dec r15
     jmp 1b
 8:  mov eax, 1
@@ -728,18 +725,18 @@ copy_old:
 1:  cmp rbx, r12
     jae 9f
     lea rdi, [rip + ints_new]
-    mov esi, 4
+    mov esi, 8
     call vec_push
     mov rcx, [r15 + STS_ints + VEC_ptr]
-    mov ecx, [rcx + rbx*4]
-    mov [rax], ecx
+    mov rcx, [rcx + rbx*8]
+    mov [rax], rcx
     inc rbx
     jmp 1b
 9:  EPILOGUE
 
 # toks_build(doc, STS): the base's ints as positions in the text
 toks_build:
-    PROLOGUE 48
+    PROLOGUE 64                 # [rsp + 48] class, [rsp + 49] effects
     mov rbx, rdi
     mov r12, rsi
     mov qword ptr [r12 + STS_toks + VEC_len], 0
@@ -757,11 +754,16 @@ toks_build:
     cmp rax, [r12 + STS_ints + VEC_len]
     ja 9f
     mov rsi, [r12 + STS_ints + VEC_ptr]
-    lea rsi, [rsi + r13*4]
+    lea rsi, [rsi + r13*8]
     add r13, 5
-    mov eax, [rsi]              # DLINE
-    mov ecx, [rsi + 4]          # DCOL
-    test eax, eax
+    mov rax, [rsi]              # DLINE
+    mov rcx, [rsi + 8]          # DCOL
+    mov rdx, 0xffffffff
+    cmp rax, rdx
+    ja 9f                       # past any text
+    cmp rcx, rdx
+    ja .Ltb_tok
+    test rax, rax
     jz 1f
     add r14, rax
     mov r15, rcx
@@ -781,35 +783,36 @@ toks_build:
     call doc_line_end
     mov [rsp + 24], rax
     mov rsi, [r12 + STS_ints + VEC_ptr]
-    lea rsi, [rsi + r13*4 - 20]
+    lea rsi, [rsi + r13*8 - 40]
 3:  mov rax, [rsp + 16]
     add rax, r15                # start
     cmp rax, [rsp + 24]
     jae .Ltb_tok
     mov [rsp + 32], rax
-    mov ecx, [rsi + 8]          # LEN
-    add rcx, rax
-    cmp rcx, [rsp + 24]
+    mov rcx, [rsi + 16]         # LEN, at most to the line's end
+    mov rdx, [rsp + 24]
+    sub rdx, rax
+    cmp rcx, rdx
     jbe 4f
-    mov rcx, [rsp + 24]
-4:  mov [rsp + 40], rcx
+    mov rcx, rdx
+4:  add rcx, rax
+    mov [rsp + 40], rcx
     # class and effects
-    mov eax, [rsi + 12]         # TYPE
+    mov rax, [rsi + 24]         # TYPE
     mov rdx, [rsp]
-    cmp eax, [rdx + SLG_ntypes]
+    mov ecx, [rdx + SLG_ntypes]
+    cmp rax, rcx
     jae .Ltb_tok
     movzx r8d, byte ptr [rdx + SLG_tcls + rax]
     movzx r9d, byte ptr [rdx + SLG_tfx + rax]
-    mov r10d, [rsi + 16]        # MODS
-    test r10d, r10d
+    mov r10, [rsi + 32]         # MODS, 64 bits
+    test r10, r10
     jz 6f
     xor ecx, ecx
     xor r11d, r11d              # a modifier's class taken
 5:  cmp ecx, [rdx + SLG_nmods]
     jae 6f
-    cmp ecx, 32
-    jae 6f
-    bt r10d, ecx
+    bt r10, rcx
     jnc 55f
     movzx eax, byte ptr [rdx + SLG_mfx + rcx]
     or r9d, eax
@@ -836,8 +839,8 @@ toks_build:
     test r9d, r9d
     jz .Ltb_tok                 # nothing to draw
 7:  # a start inside a character is dropped; an end inside one moves back to its start
-    mov [rsp + 44], r8b
-    mov [rsp + 45], r9b
+    mov [rsp + 48], r8b
+    mov [rsp + 49], r9b
     mov rdi, rbx
     mov rsi, [rsp + 32]
     call doc_byte
@@ -865,9 +868,9 @@ toks_build:
     mov rdx, [rsp + 40]
     sub rdx, rcx
     mov [rax + STK_len], edx
-    movzx ecx, byte ptr [rsp + 44]
+    movzx ecx, byte ptr [rsp + 48]
     mov [rax + STK_cls], cl
-    movzx ecx, byte ptr [rsp + 45]
+    movzx ecx, byte ptr [rsp + 49]
     mov [rax + STK_fx], cl
     jmp .Ltb_tok
 9:  EPILOGUE
@@ -1029,7 +1032,8 @@ FN semtok_line
     mov [r9 + r10], r8b
     inc r10
     jmp 5b
-6:  movzx r9d, byte ptr [rdi + STK_fx]
+6:  call fx_clip                # a later token wins over the earlier ones' effects too
+    movzx r9d, byte ptr [rdi + STK_fx]
     test r9d, r9d
     jz 3b
     mov r10, [rip + g_tkfx_n]
@@ -1051,6 +1055,69 @@ FN semtok_line
 .Lsl_none:
     mov rax, r13
 9:  EPILOGUE
+
+# fx_clip(rax a, rdx b): the effects so far leave [a, b) to a later token: one inside goes, one
+# across an end keeps the part outside (split in two when it spans the whole); keeps rax rcx rdx rdi
+fx_clip:
+    push rcx
+    push rdi
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_tkfx_n]
+    jae 9f
+    imul r11, rcx, 24
+    lea r10, [rip + g_tkfx]
+    add r11, r10
+    mov r9, [r11]               # start
+    mov r10, [r11 + 8]          # end
+    cmp r10, rax
+    jbe 8f
+    cmp r9, rdx
+    jae 8f
+    cmp r9, rax
+    jb 3f
+    cmp r10, rdx
+    ja 2f
+    # inside: the last one takes its place
+    mov rsi, [rip + g_tkfx_n]
+    dec rsi
+    mov [rip + g_tkfx_n], rsi
+    imul rsi, rsi, 24
+    lea rdi, [rip + g_tkfx]
+    add rsi, rdi
+    mov rdi, [rsi]
+    mov [r11], rdi
+    mov rdi, [rsi + 8]
+    mov [r11 + 8], rdi
+    mov rdi, [rsi + 16]
+    mov [r11 + 16], rdi
+    jmp 1b
+2:  mov [r11], rdx              # its tail stays, in the class drawn there
+    mov rsi, [rip + ov_buf + SB_ptr]
+    movzx esi, byte ptr [rsi + rdx]
+    mov [r11 + 20], esi
+    jmp 8f
+3:  mov [r11 + 8], rax          # its head stays
+    cmp r10, rdx
+    jbe 8f
+    mov rsi, [rip + g_tkfx_n]   # and its tail is another
+    cmp rsi, SEMT_FX_MAX
+    jae 8f
+    inc qword ptr [rip + g_tkfx_n]
+    imul rsi, rsi, 24
+    lea rdi, [rip + g_tkfx]
+    add rsi, rdi
+    mov [rsi], rdx
+    mov [rsi + 8], r10
+    mov edi, [r11 + 16]
+    mov [rsi + 16], edi
+    mov rdi, [rip + ov_buf + SB_ptr]
+    movzx edi, byte ptr [rdi + rdx]
+    mov [rsi + 20], edi
+8:  inc rcx
+    jmp 1b
+9:  pop rdi
+    pop rcx
+    ret
 
 # ---------------- lifetime ----------------
 

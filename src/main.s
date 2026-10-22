@@ -577,8 +577,15 @@ open_initial:
     jz 41f
     test r13d, r13d
     jz 40f
-    cmp dword ptr [r14], 0x6e756872     # "rhun": a link opens as it always did
+    cmp dword ptr [r14], 0x6e756872     # "rhun://": a link opens as it always did
+    jne 43f
+    cmp byte ptr [r14 + 4], ':'
+    jne 43f
+    cmp byte ptr [r14 + 5], '/'
+    jne 43f
+    cmp byte ptr [r14 + 6], '/'
     je 41f
+43:
     mov rdi, r14
     call workspace_add_ui
     jmp 42f

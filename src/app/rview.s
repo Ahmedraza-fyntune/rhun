@@ -177,6 +177,65 @@ vd_at:
     add rax, [rip + vdecls + VEC_ptr]
     ret
 
+# contributions group: FN rview_page_rows(ext): the extension page's Views rows (contribpage.s):
+#   each view it declares, its title; its key, kind, place, clause, open at start
+FN rview_page_rows
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + vdecls + VEC_len]
+    jae 9f
+    mov rdi, rbx
+    call vd_at
+    mov r12, rax
+    inc rbx
+    cmp [r12 + VD_ext], r15
+    jne 1b
+    mov rdi, [r12 + VD_title]
+    test rdi, rdi
+    jnz 2f
+    mov rdi, [r12 + VD_key]
+2:  call contrib_page_text
+    mov rdi, [r12 + VD_key]
+    call contrib_page_detail
+    mov eax, [r12 + VD_kind]
+    dec eax
+    cmp eax, RK_PICTURE
+    jae 3f
+    lea rcx, [rip + kind_words]
+    mov r13, [rcx + rax*8]
+    call contrib_page_part
+    mov rdi, r13
+    call contrib_page_detail
+3:  mov eax, [r12 + VD_place]
+    dec eax
+    cmp eax, 4
+    jae 4f
+    lea rcx, [rip + place_words]
+    mov r13, [rcx + rax*8]
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_in]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+4:  mov rdi, [r12 + VD_when]
+    test rdi, rdi
+    jz 5f
+    mov r13, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_when]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+5:  cmp dword ptr [r12 + VD_open], 0
+    je 6f
+    call contrib_page_part
+    lea rdi, [rip + .Lpg_open]
+    call contrib_page_detail
+6:  call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
 # rview_manifest_kv(ext, ini): one "KEY.FIELD = VALUE" of a manifest's [views]: title, place
 #   (sidebar, panel, side), kind (tree, table, log, form, doc, picture), icon, when, open (yes)
 FN rview_manifest_kv
@@ -3033,6 +3092,9 @@ FN rview_show
 .Lw_form: .asciz "form"
 .Lw_doc: .asciz "doc"
 .Lw_picture: .asciz "picture"
+.Lpg_in: .asciz "in the "
+.Lpg_when: .asciz "when "
+.Lpg_open: .asciz "open at start"
 .Lloading: .asciz "Loading\342\200\246"
 .Lunsupported: .asciz "This extension does not support this kind of view."
 .Lstopped: .asciz "The extension is stopped."
@@ -3846,6 +3908,12 @@ patch_check_ops:
     mov [rip + p_rv], rax
     mov ecx, [rax + RV_kind]
     mov [rip + p_kind], ecx
+    push rax
+    push rax
+    mov rdi, [rax + RV_form]    # a form counts its fields across the patch's ops
+    call form_check_begin
+    pop rax
+    pop rax
     mov rdi, rax                # the action keys it would have, staged op by op
     call akeys_init
     xor eax, eax
@@ -6028,6 +6096,8 @@ FN rview_docs_frame_end
     cmp qword ptr [rax + RV_ext], 0
     je 2f
     cmp dword ptr [rax + RV_kind], RK_DOC
+    jne 2f
+    cmp dword ptr [rax + RV_vis], 1     # shown: a hidden view catches up when shown
     jne 2f
     mov rdi, [rax + RV_doc]
     test rdi, rdi

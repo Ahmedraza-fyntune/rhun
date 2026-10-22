@@ -2029,6 +2029,7 @@ FN ext_load
     call path_join
     mov r12, rax
     mov rdi, rax
+    mov rsi, rbx
     call syntax_add_dir
     mov rdi, r12
     call mem_free

@@ -673,9 +673,9 @@ draw_detail:
     COLOR edx, T_MUTED
     mov ecx, MI_24
     call line_text
-    # its commands
+    # contributions group: what it adds (its commands and their keys among them) and its problems
     mov rdi, rbx
-    call draw_commands
+    call draw_contrib
     # the language features it provides, with the session's numbers (query.s)
     mov rdi, rbx
     call draw_langfeat
@@ -822,62 +822,61 @@ cstr_copy_cap:
 2:  mov byte ptr [rdi + rdx], 0
     ret
 
-# draw_commands(ext): "Commands": each title and its keys
-draw_commands:
-    PROLOGUE 16
-    mov rbx, rdi
-    mov rax, rbx
-    lea rcx, [rip + g_exts]
-    sub rax, [rcx + VEC_ptr]
-    xor edx, edx
-    mov ecx, EXT_SIZE
-    div rcx
-    mov r14, rax                # its index
-    xor r13d, r13d              # shown
-    xor r12d, r12d
-1:  cmp r12, [rip + g_ext_cmds + VEC_len]
-    jae 8f
-    mov rax, [rip + g_ext_owner + VEC_ptr]
-    cmp [rax + r12*8], r14
-    jne 7f
-    test r13d, r13d
-    jnz 2f
-    lea rsi, [rip + .Ls_commands]
-    call section
-2:  inc r13d
-    imul r15, r12, CMD_SIZE
-    add r15, [rip + g_ext_cmds + VEC_ptr]
-    # the title without " (Extension)"
-    mov rsi, [r15 + CMD_title]
-    lea rdi, [rip + xp_buf]
-    call copy_title
-    lea rdi, [rip + g_face_ui]
-    lea rsi, [rip + xp_buf]
-    COLOR edx, T_FG
-    mov ecx, MI_28
-    mov r8d, [rip + xp_x]
-    call text_at_keep
-    mov rdi, r15
-    call keys_for
+# contributions group: draw_contrib(ext): "Contributions" (contribpage.s): what it adds, under a
+# heading per kind (commands with their keys, keys, menus, status bar, settings, languages, file
+# icon themes, views), a row each with its detail below in the small face, and its manifest's
+# problems in the error color
+draw_contrib:
+    PROLOGUE
+    call contrib_page_build
     test rax, rax
-    jz 3f
-    mov [rsp], rax
-    mov rdi, rax
-    call label_width_small
-    mov esi, [rip + xp_x]
-    add esi, [rip + xp_w]
-    sub esi, eax
-    lea rdi, [rip + g_face_small]
-    mov edx, [rip + xp_y]
-    M ecx, MI_28
-    mov r8, [rsp]
-    COLOR r9d, T_MUTED
-    call ui_text_c
-3:  M eax, MI_28
+    jz 9f
+    lea rsi, [rip + .Ls_contrib]
+    call section
+    xor r12d, r12d
+1:  mov rdi, r12
+    call contrib_page_at
+    cmp eax, -1
+    je 9f
+    inc r12
+    mov r13, rdx                # the text
+    mov r14, rcx                # the detail, or 0
+    mov r15d, r8d               # the tone
+    test eax, eax
+    jnz 2f
+    M eax, MI_8                 # a heading
     add [rip + xp_y], eax
-7:  inc r12
+    lea rdi, [rip + g_face_small]
+    mov rsi, r13
+    COLOR edx, T_MUTED
+    mov ecx, MI_24
+    call line_text
     jmp 1b
-8:  EPILOGUE
+2:  COLOR edx, T_FG
+    cmp r15d, 2
+    jne 3f
+    COLOR edx, T_ERROR
+3:  lea rdi, [rip + g_face_ui]
+    mov rsi, r13
+    mov ecx, MI_28
+    call line_text
+    test r14, r14
+    jz 1b
+    COLOR edx, T_MUTED
+    cmp r15d, 1
+    jne 4f
+    COLOR edx, T_WARNING
+4:  cmp r15d, 2
+    jne 5f
+    COLOR edx, T_ERROR
+5:  lea rdi, [rip + g_face_small]
+    mov rsi, r14
+    mov ecx, MI_24
+    mov r8d, [rip + xp_x]
+    add r8d, [rip + g_mt + 4*MI_16]
+    call para
+    jmp 1b
+9:  EPILOGUE
 
 # draw_langfeat(ext): "Language features": each kind it provides, its file patterns in force and
 # its numbers this session, in the warning color when slow or failing (query.s)
@@ -933,40 +932,6 @@ draw_langfeat:
 7:  inc r12d
     jmp 1b
 9:  EPILOGUE
-
-# copy_title(dst, title): up to the last " (" (the extension's name that the palette adds)
-copy_title:
-    push rbx
-    mov rbx, rdi
-    mov rdi, rsi
-    push rsi
-    call strlen
-    pop rsi
-    mov rcx, rax
-1:  cmp rcx, 2
-    jb 2f
-    cmp byte ptr [rsi + rcx - 2], ' '
-    jne 11f
-    cmp byte ptr [rsi + rcx - 1], '('
-    je 3f
-11: dec rcx
-    jmp 1b
-2:  mov rcx, rax                # no suffix: the whole title
-    jmp 4f
-3:  sub rcx, 2
-4:  cmp rcx, 60
-    jbe 5f
-    mov ecx, 60
-5:  mov rdi, rbx
-    mov rdx, rcx
-    push rdx
-    push rdx
-    call memcpy
-    pop rdx
-    pop rdx
-    mov byte ptr [rbx + rdx], 0
-    pop rbx
-    ret
 
 # draw_settings(ext): a row per setting: its title and description, its control on the right
 draw_settings:
@@ -3366,7 +3331,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ls_permissions: .asciz "It can"
 .Ls_resources: .asciz "Resources"
 .Ls_toolbar: .asciz "Title bar"
-.Ls_commands: .asciz "Commands"
+.Ls_contrib: .asciz "Contributions"
 .Ls_langfeat: .asciz "Language features"
 .Ls_settings: .asciz "Settings"
 .Lb_install: .asciz "Install \342\226\276"

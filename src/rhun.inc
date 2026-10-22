@@ -1901,6 +1901,7 @@ F GR_src, 8             # built-in text not parsed yet (syntax_ready parses it),
 F GR_srclen, 8
 F GR_ficon, 8           # GR_icon read by file_icon (0 until then)
 F GR_lckeys, 8          # language configuration keys the grammar sets (langconf.s), or 0
+F GR_ext, 8             # the extension it came from (syntax_add_dir), or 0
 ENDSTRUCT GR_SIZE
 .equ SN_EXACT, 0x10000           # syntax_for_name: an exact name fits
 .equ GF_NOCASE, 1
@@ -1912,6 +1913,8 @@ ENDSTRUCT GR_SIZE
 .equ GF_OPS, 64
 .equ GF_COLON, 128          # indent after a line ending with ":"
 .equ GF_USER, 256           # from ~/.config/rhun/syntax: its language keys win over extensions'
+.equ GF_COLON_SET, 512      # colon_indent is in the file (yes or no)
+.equ GF_IDENT_SET, 1024     # ident is in the file
 
 # lc_type's plan for a typed character (langconf.s)
 STRUCT
@@ -2838,6 +2841,7 @@ ENDSTRUCT AS_SIZE
 .equ DS_PEND, 256                   # requests in flight per session
 .equ DAP_BODY_MAX, 8388608          # one message
 .equ DAP_CONNECT_MS, 10000          # tcp: the adapter accepts a connection within this
+.equ DAP_COPY_MS, 60000             # remote window: an adapter's extension reaches the host within this
 .equ DAP_CONNECT_EVERY, 100         # and is tried this often
 .equ DAP_LOOPBACK, 0x0100007f       # 127.0.0.1 in network order
 .equ DBGX_BODY_MAX, 1048576 + 256     # debug-start's body: NAME and a configuration body
@@ -3036,12 +3040,15 @@ F DS_conn_until, 8      # time_ms when connecting gives up
 F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
 F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
 F DS_wgen, 4            # the last round of watch evaluations sent
+F DS_rconn, 4           # remote window, tcp: 0 no attempt, 1 the host connects, 2 connected, 3 refused
+F DS_rtry, 4            # and the attempt's number (an older attempt's answer is ignored)
+F DS_rcopy, 4           # remote window: 1 while its extension's files are copied to the host first
+F DS_pad3, 4
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
-F DS_pad2, 4
+F DS_wlist, 4           # the watch list's version its last round evaluated (g_dwlist)
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
-F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*
@@ -3063,6 +3070,8 @@ F DS_wq, SB_SIZE        # bytes to write to it
 F DS_wq_off, 8
 F DS_ebuf, SB_SIZE      # its error output: the line in progress
 F DS_etail, SB_SIZE     # and the last lines (for a crash message)
+F DS_obuf, SB_SIZE      # tcp: its standard output's line in progress
+F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_filters, SB_SIZE   # exception filters: "FILTER\tLABEL\tDEFAULT\n" lines
 F DS_threads, VEC_SIZE  # TH
 F DS_frames, VEC_SIZE   # FR of the focused thread
@@ -3454,7 +3463,7 @@ F NB_vy, 4              # where its cells were drawn last (physical px), for tes
 F NB_vh, 4
 F NB_sent, VEC_SIZE     # NBS2 records: per extension, the order of the cells it last heard (A3)
 F NB_rev, 8             # bumped by every cell operation and output change (what NB_dirty records)
-F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length and version, 24 bytes each
+F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length, version and history hash (32 B)
 F NB_snaprev, 8         # NB_rev when nb-save's body was made
 F NB_openstamp, 8       # nb_stamp when a reload's nb-open went out
 ENDSTRUCT NB_SIZE
@@ -3497,6 +3506,7 @@ F NBC_mdy, 4
 F NBC_tx, 4              # x of its text's column 0 and y of its first line as last drawn, for tests
 F NBC_ty, 4
 F NBC_pad2, 4
+F NBC_mdbase, 8          # a hash of the notebook's path its relative links were set for
 ENDSTRUCT NBC_SIZE
 .equ NBCK_CODE, 0
 .equ NBCK_MARKUP, 1
@@ -3595,6 +3605,10 @@ F CE_skind, 4           # CEK_* of the save in progress
 F CE_dirtyat, 8         # owned: when it last said dirty (time_ms): its backup follows 30 s later
 F CE_bkdone, 4          # owned: the backup holds what it shows since it last said dirty
 F CE_restore, 4         # owned: its bytes come from its backup (opened with SOURCE backup) until saved
+F CE_gen, 8             # owned: one more with every editor-dirty (the model changed)
+F CE_savegen, 8         # CE_gen when the save or backup in progress asked its first part
+F CE_lost, 4            # its program ended: the next tick opens it again if the program runs again
+F CE_pad, 4
 ENDSTRUCT CE_SIZE
 .equ CEM_TEXT, 0
 .equ CEM_OWNED, 1

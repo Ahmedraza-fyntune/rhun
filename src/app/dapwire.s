@@ -348,7 +348,12 @@ FN dap_tcp_split
 FN dap_connect_try
     PROLOGUE 32
     mov rbx, rdi
-    mov r12d, [rbx + DS_csock]
+    # a remote window: the adapter listens on the host's loopback, which the host connects to
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    cmp dword ptr [rbx + DS_addr], DAP_LOOPBACK
+    je .Lct_remote
+1:  mov r12d, [rbx + DS_csock]
     test r12d, r12d
     jns 2f
     mov edi, DSK_AF_INET
@@ -430,6 +435,75 @@ FN dap_connect_try
     mov dword ptr [rbx + DS_out], -1
     mov rax, r13
 9:  EPILOGUE
+.Lct_remote:
+    # one attempt at a time: a socketpair whose other end the host's connection carries
+    #   (remote_sock_connect); refused, it is tried again on the next tick
+    mov eax, [rbx + DS_rconn]
+    cmp eax, 2
+    je 13f
+    cmp eax, 1
+    je 4b                       # the host is still connecting
+    cmp eax, 3
+    jne 11f
+    mov edi, [rbx + DS_csock]
+    SYS SYS_close
+    mov dword ptr [rbx + DS_csock], -1
+    mov dword ptr [rbx + DS_rconn], 0
+    jmp 4b
+11: mov edi, AF_UNIX
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK
+    xor edx, edx
+    lea r10, [rsp]
+    SYS SYS_socketpair
+    test rax, rax
+    js 9b
+    mov eax, [rsp]
+    mov [rbx + DS_csock], eax
+    inc dword ptr [rbx + DS_rtry]
+    mov dword ptr [rbx + DS_rconn], 1
+    mov rdi, rbx
+    call dap_slot_index
+    mov ecx, [rbx + DS_rtry]
+    shl rcx, 8
+    or rcx, rax
+    mov edi, [rsp + 4]
+    mov esi, [rbx + DS_port]
+    lea rdx, [rip + rconn_done]
+    call remote_sock_connect    # it owns the other end, also when it fails
+    test rax, rax
+    jns 4b
+    mov dword ptr [rbx + DS_rconn], 3     # no channel now: again on the next tick
+    jmp 4b
+13: mov r12d, [rbx + DS_csock]
+    mov dword ptr [rbx + DS_rconn], 0
+    jmp 5b
+
+# rconn_done(slot | attempt << 8, 0 connected | 1 refused): the host's answer to a connection; the
+#   next tick goes on (connect_tick)
+rconn_done:
+    PROLOGUE
+    mov r12, rdi
+    mov r13d, esi
+    movzx edi, r12b
+    cmp edi, DS_MAX
+    jae 9f
+    call dap_slot
+    mov rbx, rax
+    shr r12, 8
+    cmp r12d, [rbx + DS_rtry]
+    jne 9f
+    cmp dword ptr [rbx + DS_rconn], 1
+    jne 9f
+    mov eax, 2
+    test r13d, r13d
+    jz 1f
+    mov eax, 3
+1:  mov [rbx + DS_rconn], eax
+    test r13d, r13d
+    jnz 2f
+    mov qword ptr [rbx + DS_deadline], 0  # connected: at once
+2:  mov dword ptr [rip + g_dirty], 1
+9:  EPILOGUE
 
 # ---------------- reading ----------------
 
@@ -507,11 +581,14 @@ on_lines:
     mov r12d, edi
     mov rbx, rdx
     mov r15d, ecx               # the field that holds this fd
-    # a tcp adapter's standard output is where the program it starts writes (Delve's debuggee)
+    # a tcp adapter's standard output is where the program it starts writes (Delve's debuggee);
+    #   each stream keeps its own line in progress
     mov dword ptr [rsp], DCON_ADAPTER
+    mov dword ptr [rsp + 4], DS_ebuf
     cmp ecx, DS_aout
     jne 1f
     mov dword ptr [rsp], DCON_STDOUT
+    mov dword ptr [rsp + 4], DS_obuf
 1:  mov edi, r12d
     lea rsi, [rip + errchunk]
     mov edx, 4096
@@ -525,6 +602,7 @@ on_lines:
     # closed: what is left is a last line
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     mov edi, r12d
     call watch_remove
@@ -543,25 +621,31 @@ on_lines:
     jne 4f
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     jmp 3b
-4:  lea rdi, [rbx + DS_ebuf]
+4:  mov eax, [rsp + 4]
+    lea rdi, [rbx + rax]
     call sb_push_byte
-    cmp qword ptr [rbx + DS_ebuf + SB_len], DAP_LINE_MAX
+    mov eax, [rsp + 4]
+    cmp qword ptr [rbx + rax + SB_len], DAP_LINE_MAX
     jb 3b
     mov rdi, rbx
     mov esi, [rsp]              # the category
+    mov edx, [rsp + 4]          # the line in progress
     call err_flush
     jmp 3b
 9:  EPILOGUE
 
-# err_flush(ds, category): the line in progress, if any, to the console and the tail
+# err_flush(ds, category, DS_ebuf | DS_obuf): that line in progress, if any, to the console and the
+#   tail
 err_flush:
     PROLOGUE
     mov rbx, rdi
     mov r14d, esi
-    mov r12, [rbx + DS_ebuf + SB_ptr]
-    mov r13, [rbx + DS_ebuf + SB_len]
+    mov r15d, edx
+    mov r12, [rbx + r15 + SB_ptr]
+    mov r13, [rbx + r15 + SB_len]
     test r13, r13
     jz 9f
     cmp byte ptr [r12 + r13 - 1], 13
@@ -605,7 +689,7 @@ err_flush:
     mov rdx, rsi
     lea rsi, [rdi + rcx]
     call memmove
-8:  lea rdi, [rbx + DS_ebuf]
+8:  lea rdi, [rbx + r15]
     call sb_clear
 9:  EPILOGUE
 

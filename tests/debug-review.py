@@ -120,6 +120,23 @@ class Review(debughost.DebugHost):
         state = [l for l in out if l.startswith('tabs=')][-1]
         self.assertIn(' focus=0 ', state)                   # FOCUS_EDITOR
 
+    def test_session_buffers_survive_slot_reuse(self):
+        # round 3: DS_prevvals sat among the scalars ds_free_mem zeroes, so a reused slot leaked its
+        #   snapshot; every SB or VEC of a session must lie after DS_launch and be in ds_buffers
+        import re
+        inc = (debughost.ROOT / 'src/rhun.inc').read_text(encoding='utf-8')
+        body = inc[inc.index('# a debug session'):]
+        body = body[:body.index('ENDSTRUCT DS_SIZE')]
+        fields = re.findall(r'^F (DS_\w+), (\w+)', body, re.M)
+        names = [f for f, _ in fields]
+        buffers = [f for f, size in fields if size in ('SB_SIZE', 'VEC_SIZE')]
+        dap = (debughost.ROOT / 'src/app/dap.s').read_text(encoding='utf-8')
+        table = dap[dap.index('ds_buffers:'):]
+        table = table[:table.index('-1')]
+        for f in buffers:
+            self.assertGreaterEqual(names.index(f), names.index('DS_launch'), f)
+            self.assertIn(f, table, f)
+
 
 if __name__ == '__main__':
     unittest.main()

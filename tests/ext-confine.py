@@ -5,6 +5,8 @@ Where the kernel cannot confine (no Landlock, as in Docker Desktop's VM or under
 --extensions session runs the program unconfined and says so: those cases are skipped, not
 passed. Run on a native x86-64 Linux or on macOS for the real thing."""
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import unittest
@@ -85,6 +87,52 @@ class Confine(host.Host):
         self.assertEqual(out[0], 'toast=probe refused', out)
         out = self.probe('echo.exec', 'documents = read\nrun = ls')
         self.assertEqual(out[0], 'toast=probe ok', out)
+
+    def xcode_shims(self, names):
+        """the names whose PATH program is one of Xcode's /usr/bin shims (macOS), with their real tools"""
+        if sys.platform != 'darwin' or not os.path.exists('/usr/bin/xcrun'):
+            return {}
+        shims = {}
+        for name in names:
+            if shutil.which(name, path=self.env.get('PATH')) != '/usr/bin/' + name:
+                continue
+            found = subprocess.run(['/usr/bin/xcrun', '--find', name], capture_output=True, text=True, timeout=60)
+            real = found.stdout.strip()
+            if found.returncode == 0 and real and os.path.realpath(real) != os.path.realpath('/usr/bin/' + name):
+                shims[name] = real
+        return shims
+
+    def test_an_xcode_shim_finds_its_tool_without_xcodebuild(self):
+        # macOS: /usr/bin/git is Xcode's shim. Inside the sandbox its first lookup would run
+        # xcodebuild for seconds (an extension's 10 s timeout killed it under load, every time);
+        # rhun fills the extension's xcrun cache outside the sandbox, so git answers from it
+        real = self.xcode_shims(['git']).get('git')
+        if not real:
+            self.skipTest('/usr/bin/git is not an Xcode shim here')
+        git = dict(self.env, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@t', GIT_COMMITTER_NAME='t',
+                   GIT_COMMITTER_EMAIL='t@t', GIT_CONFIG_NOSYSTEM='1')
+        for args in (['init', '-q'], ['add', '.'], ['commit', '-qm', 'one']):
+            subprocess.run([real, *args], cwd=self.proj, env=git, check=True, capture_output=True, timeout=60)
+        exts = self.manifest_variant('xcshim', **{'documents = write\nterminal = yes\nproject = read':
+                                                 'documents = read\nproject = read\nrun = git'})
+        polls = [a for _ in range(50) for a in ('wait 500', 'print-toast')]
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.git', 'wait-ext echo running', *polls,
+                                                        'print-extensions'], exts=exts)
+        self.skip_unless_confined(out[-1])
+        toasts = [l for l in out if l.startswith('toast=') and l != 'toast=']
+        self.assertIn('toast=probe ok', toasts, out)
+        self.assertTrue((self.work / 'state/rhun/extensions/rhun-tests--echo/xcrun_db').is_file())
+
+    def test_xcode_shims_do_not_hold_up_the_start(self):
+        # filling the cache for several shims takes seconds: the extension says hello meanwhile
+        shims = self.xcode_shims(['git', 'clang', 'clangd', 'swift', 'sourcekit-lsp', 'lldb'])
+        if len(shims) < 2:
+            self.skipTest('fewer than two Xcode shims here')
+        exts = self.manifest_variant('xcshims', **{'documents = write\nterminal = yes\nproject = read':
+                                                  'documents = read\nrun = ' + ' '.join(shims)})
+        out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait 1500', 'print-extensions'], exts=exts)
+        self.skip_unless_confined(out[-1])
+        self.assertIn('state=running', out[-1])
 
     def test_disable_stops_and_keeps_it_stopped(self):
         out = self.run_editor(drop_waits=True, actions=['cmd echo.toast', 'wait-ext echo running', 'wait 300',

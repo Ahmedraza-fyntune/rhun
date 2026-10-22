@@ -1935,7 +1935,16 @@ FN quick_draw
     mov dword ptr [rdi + TF_id], ID_QUICK + 0x3000
     test dword ptr [rip + q_flags], QF_PASSWORD
     jz 44f
+    mov [rsp + 16 + 56], esi    # masked_field keeps none of the field's arguments
+    mov [rsp + 16 + 60], edx
+    mov [rsp + 16 + 64], ecx
+    mov [rsp + 16 + 68], r9d
     call masked_field
+    mov esi, [rsp + 16 + 56]
+    mov edx, [rsp + 16 + 60]
+    mov ecx, [rsp + 16 + 64]
+    mov r9d, [rsp + 16 + 68]
+    M r8d, MI_32
 44: call ui_textfield
     add rsp, 16
     test dword ptr [rip + q_flags], QF_BUSY
@@ -1988,7 +1997,7 @@ FN quick_draw
     test eax, eax
     jnz 47f
     mov eax, 1                  # less than a row still moves one
-    cmp qword ptr [rip + g_scroll_y], 0
+    cmp dword ptr [rip + g_scroll_y], 0
     jg 47f
     mov eax, -1
 47: add [rip + q_scroll], eax

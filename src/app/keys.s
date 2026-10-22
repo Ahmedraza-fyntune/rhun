@@ -1867,6 +1867,166 @@ FN keys_list
     jmp 3b
 9:  EPILOGUE
 
+# FN keys_page_rows(ext): the extension page's Keys rows (contribpage.s): each binding it makes,
+#   "Ctrl+K Ctrl+C  Toggle Comment", and "active", "overrides built-in TITLE", "shadowed by your
+#   [keys]" (or by built-in, by OWNER/NAME) or "refused: WHY", its clause, its arguments
+FN keys_page_rows
+    PROLOGUE
+    mov r15, rdi
+    xor ebx, ebx
+1:  cmp rbx, [rip + bindings + VEC_len]
+    jae 9f
+    imul r12, rbx, KB_SIZE
+    add r12, [rip + bindings + VEC_ptr]
+    inc rbx
+    cmp [r12 + KB_ext], r15
+    jne 1b
+    # the strokes (as written when they cannot be read) and the command
+    mov rdi, [r12 + KB_text]
+    cmp dword ptr [r12 + KB_key], 0
+    je 2f
+    lea rdi, [rip + keybuf]
+    mov rsi, r12
+    call fmt_binding
+    lea rdi, [rip + keybuf]
+2:  call contrib_page_text
+    lea rdi, [rip + .Ls_two_sp]
+    call contrib_page_text
+    mov rax, [r12 + KB_cmd]
+    test rax, rax
+    jz 3f
+    lea rcx, [rip + none_cmd]
+    cmp rax, rcx
+    je 3f
+    mov rdi, [rax + CMD_title]
+    call contrib_page_title
+    jmp 4f
+3:  mov rdi, [r12 + KB_name]
+    test rdi, rdi
+    jz 4f
+    call contrib_page_text
+4:  # how it stands
+    mov eax, [r12 + KB_refused]
+    test eax, eax
+    jz 5f
+    dec eax
+    lea rcx, [rip + refusal_words]
+    mov r13, [rcx + rax*8]
+    lea rdi, [rip + .Lp_refused]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+    mov edi, 1
+    call contrib_page_tone
+    jmp 7f
+5:  mov rdi, r12
+    call kb_shadow
+    test rax, rax
+    jz 6f
+    mov r13, rax
+    lea rdi, [rip + .Lp_shadowed]
+    call contrib_page_detail
+    mov rdi, r13
+    call kp_source
+    mov edi, 1
+    call contrib_page_tone
+    jmp 7f
+6:  mov rdi, r12
+    call kb_overrides
+    test rax, rax
+    jz 61f
+    mov r13, rax
+    lea rdi, [rip + .Lp_overrides]
+    call contrib_page_detail
+    mov rax, [r13 + KB_cmd]
+    mov rdi, [rax + CMD_title]
+    call contrib_page_detail
+    jmp 7f
+61: lea rdi, [rip + .Ls_active]
+    call contrib_page_detail
+7:  cmp dword ptr [r12 + KB_rank], KRANK_DEFAULT
+    jne 71f
+    call contrib_page_part
+    lea rdi, [rip + .Lp_default]
+    call contrib_page_detail
+71: mov rdi, [r12 + KB_when]
+    test rdi, rdi
+    jz 72f
+    call when_source
+    mov r13, rax
+    mov r14, rdx
+    call contrib_page_part
+    lea rdi, [rip + .Lwhen_sp]
+    call contrib_page_detail
+    mov rdi, r13
+    mov rsi, r14
+    call contrib_page_detail_n
+72: mov rdi, [r12 + KB_args]
+    test rdi, rdi
+    jz 73f
+    mov r13, rdi
+    call contrib_page_part
+    lea rdi, [rip + .Lp_args]
+    call contrib_page_detail
+    mov rdi, r13
+    call contrib_page_detail
+73: call contrib_page_end
+    jmp 1b
+9:  EPILOGUE
+
+# kp_source(kb): who a binding is, in the page's words: "your [keys]", "built-in", "OWNER/NAME"
+kp_source:
+    PROLOGUE
+    mov rbx, rdi
+    lea rdi, [rip + .Lp_user]
+    cmp dword ptr [rbx + KB_rank], KRANK_USER
+    je 8f
+    lea rdi, [rip + .Lp_builtin]
+    cmp dword ptr [rbx + KB_rank], KRANK_BUILTIN
+    je 8f
+    mov r12, [rbx + KB_ext]
+    test r12, r12
+    jz 9f
+    mov rdi, [r12 + EXT_owner]
+    call contrib_page_detail
+    lea rdi, [rip + .Lp_slash]
+    call contrib_page_detail
+    mov rdi, [r12 + EXT_name]
+8:  call contrib_page_detail
+9:  EPILOGUE
+
+# kb_overrides(kb) -> rax the built-in binding of the same strokes it wins over, or 0
+kb_overrides:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rip + bindings + VEC_len]
+    jae 8f
+    imul r13, r12, KB_SIZE
+    add r13, [rip + bindings + VEC_ptr]
+    inc r12
+    cmp dword ptr [r13 + KB_rank], KRANK_BUILTIN
+    jne 1b
+    cmp dword ptr [r13 + KB_refused], 0
+    jne 1b
+    mov rax, [r13 + KB_mods]    # mods and key
+    cmp rax, [rbx + KB_mods]
+    jne 1b
+    mov rax, [r13 + KB_mods2]
+    cmp rax, [rbx + KB_mods2]
+    jne 1b
+    cmp qword ptr [r13 + KB_cmd], 0
+    je 1b
+    mov rdi, rbx
+    mov rsi, r13
+    call kb_better
+    test eax, eax
+    jz 1b
+    mov rax, r13
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 FN cmd_none
     ret
 
@@ -1928,6 +2088,21 @@ refusal_names: .quad .Lr_command, .Lr_when, .Lr_typing, .Lr_prefix, .Lr_strokes,
 .Lr_prefix: .asciz "prefix"
 .Lr_strokes: .asciz "strokes"
 .Lr_args: .asciz "args"
+refusal_words: .quad .Lw_command, .Lw_when, .Lw_typing, .Lw_prefix, .Lw_strokes, .Lw_args
+.Lw_command: .asciz "no such command"
+.Lw_when: .asciz "its when clause does not compile"
+.Lw_typing: .asciz "a typing key needs a when guard"
+.Lw_prefix: .asciz "a chord's first stroke needs ctrl, alt or super"
+.Lw_strokes: .asciz "not one or two strokes"
+.Lw_args: .asciz "arguments over 4096 bytes"
+.Lp_refused: .asciz "refused: "
+.Lp_shadowed: .asciz "shadowed by "
+.Lp_overrides: .asciz "overrides built-in "
+.Lp_default: .asciz "the command's default key"
+.Lp_args: .asciz "arguments "
+.Lp_user: .asciz "your [keys]"
+.Lp_builtin: .asciz "built-in"
+.Lp_slash: .asciz "/"
 .Lwhen_sp: .asciz "when "
 .Lsp_when_sp: .asciz " when "
 .Lnone_word: .asciz "none"

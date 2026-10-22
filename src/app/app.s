@@ -2338,7 +2338,12 @@ FN app_on_paste
     mov rsi, r12
     call agentext_paste
     jmp 9f
-5:  mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
+5:  mov rdi, rbx                # an extension's version control message box (scmpanel.s)
+    mov rsi, r12
+    call scmpanel_paste
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # a picture with the keyboard (views group, viewpic.s)
     mov rsi, r12
     call views_paste
     test eax, eax
@@ -2372,7 +2377,7 @@ FN app_on_paste
 FN focused_field
     mov eax, [rip + g_focus]
     cmp eax, FOCUS_VIEW
-    je views_field              # a view's own field (views group, rview.s)
+    je 1f
     cmp eax, FOCUS_QUICK
     je quick_field              # an extension's quick input (quick.s)
     cmp eax, FOCUS_SCM
@@ -2392,6 +2397,12 @@ FN focused_field
     cmp eax, FOCUS_AGENT_INPUT
     je agentext_field
     xor eax, eax
+    ret
+1:  sub rsp, 8                  # an extension's version control message box (scmpanel.s), else a
+    call scmpanel_field         #   view's own field (views group, rview.s)
+    add rsp, 8
+    test rax, rax
+    jz views_field
     ret
 
 # field_changed(): notify the owner of the focused field
@@ -2576,7 +2587,12 @@ FN app_on_key
     call complete_key           # the completion list, when it shows, takes its keys first
     test eax, eax
     jnz 9f
-    mov edi, r12d               # AI: a Review tab's keys (review.s)
+    cmp r12d, KEY_ESCAPE        # language features: Escape cancels a query still searching
+    jne 74f
+    call langfeat_escape
+    test eax, eax
+    jnz 9f
+74: mov edi, r12d               # AI: a Review tab's keys (review.s)
     mov esi, r13d
     mov edx, r14d
     call review_key

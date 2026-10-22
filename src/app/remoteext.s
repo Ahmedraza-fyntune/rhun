@@ -246,6 +246,51 @@ FN remote_ext_spawn
     mov rax, -12
     EPILOGUE
 
+# remote_ext_copy(ext, start) -> eax 1 when its files are on the host, 0 while they are on their
+#   way (or the host is not connected), -1 when they cannot be (rdx: why, a cstr). Only the copy:
+#   the extension is not started. start 1 begins a copy that is not there or failed before; 0 only
+#   asks how it goes. The debugger's adapters that live in their extension's folder [debugger group]
+FN remote_ext_copy
+    PROLOGUE
+    mov rbx, rdi
+    mov r13d, esi
+    mov esi, 1
+    call rx_find
+    test rax, rax
+    jz 7f
+    mov r12, rax
+    mov eax, [r12 + RX_state]
+    cmp eax, RXS_READY
+    je 1f
+    cmp eax, RXS_FAILED
+    je 3f
+    cmp eax, RXS_NEW
+    jne 5f                      # on its way
+2:  call remote_is_up
+    test eax, eax
+    jz 5f                       # asked again once the host answers
+    mov rdi, r12
+    call rx_continue
+    mov eax, [r12 + RX_state]
+    cmp eax, RXS_READY
+    je 1f
+    cmp eax, RXS_FAILED
+    je 6f
+5:  xor eax, eax
+    EPILOGUE
+3:  test r13d, r13d
+    jz 6f
+    mov dword ptr [r12 + RX_state], RXS_NEW
+    jmp 2b
+6:  mov eax, -1
+    lea rdx, [r12 + RX_why]
+    EPILOGUE
+7:  mov eax, -1
+    lea rdx, [rip + .Lr_full]
+    EPILOGUE
+1:  mov eax, 1
+    EPILOGUE
+
 # remote_ext_tick(): copies held back by a full request table go on
 FN remote_ext_tick
     PROLOGUE
@@ -1117,16 +1162,8 @@ rx_walk_cb:
     mov rdx, r14
     call sb_push
     call rx_wpath_end
-    # a link: what it leads to must be inside the folder (it is copied as what it leads to)
-    mov rdi, [rip + rx_wpath + SB_ptr]
-    lea rsi, [rip + rx_stat]
-    SYS SYS_lstat
-    test rax, rax
-    js 8f
-    mov eax, [rip + rx_stat + 24]
-    and eax, 0xf000
-    cmp eax, 0xa000
-    jne 22f
+    # what each entry leads to must be inside the folder (a link is copied as what it leads to);
+    # every entry is resolved, as Windows' stat follows reparse points and junctions unseen
     mov rdi, [rip + rx_wpath + SB_ptr]
     lea rsi, [rip + rx_lnkreal]
     call local_realpath

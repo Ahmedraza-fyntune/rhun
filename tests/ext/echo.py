@@ -572,6 +572,28 @@ def on_run(command, doc, versions):
             import subprocess
             subprocess.run(['/bin/ls', '/usr'], capture_output=True, check=True)   # a folder the rules let it read
         probe(run_ls)
+    elif name == 'git':
+        def run_git():
+            import subprocess
+            # /usr/bin/git on macOS is Xcode's shim: xcrun finds the real git, from its cache or by
+            # running xcodebuild, which the sandbox makes slow enough to time out (xcrun_verbose
+            # says which it was). rhun fills the cache beside the starting extension: wait for it
+            import time
+            for _ in range(300):
+                if os.path.exists(os.path.join(os.environ['RHUN_STATE'], 'xcrun_db')):
+                    break
+                time.sleep(0.1)
+            env = dict(os.environ, xcrun_verbose='1')
+            for args in (['--version'], ['log', '--oneline', '-n', '1']):
+                done = subprocess.run(['/usr/bin/git', *args], cwd=os.environ['RHUN_PROJECT'], capture_output=True,
+                                      check=True, timeout=10, stdin=subprocess.DEVNULL, env=env)
+                if b"with 'xcodebuild" in done.stderr or b'looking up SDK with' in done.stderr:
+                    raise XcodebuildLookup()
+        probe(run_git)
+
+
+class XcodebuildLookup(Exception):
+    pass
 
 
 def probe(fn):

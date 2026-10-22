@@ -12,20 +12,23 @@ orphan, partial-pause,
 no-terminate-cap, no-cond-caps, preserve-focus), lifetimes (strict-refs), features (exceptions, stderr). Every message is logged
 to FAKEDAP_LOG. With `--listen HOST:PORT` it speaks DAP over one TCP connection instead of its
 standard input and output, as Delve does; tcp-late=MS listens late, tcp-exit exits before listening,
-tcp-never never listens. Threads: with `threads` a step's "thread" (default 1) is the thread it
+tcp-never never listens; mixed-out interleaves a partial stdout line with a stderr one. Threads: with `threads` a step's "thread" (default 1) is the thread it
 runs on: entering a step on a new thread sends a thread started event, "threadExit": N an exited
 one, a stop names the step's thread, other threads show one waiting frame, and continue, the steps
 and pause fail for a thread that is not alive. lldb-threads leaves a worker thread out of the
 threads answer at its first stop (as lldb-dap does); single-continue answers continue with
 allThreadsContinued false; a stopped step's "threadStarted": N and "continuedOther": N send those
-events while paused. Standard library only; run with -I."""
+events while paused. --mode MODES adds to FAKEDAP_MODE. Standard library only; run with -I."""
 import json
 import os
 import sys
 import time
 
 MODE = {}
-for part in os.environ.get('FAKEDAP_MODE', '').split(','):
+_modes = os.environ.get('FAKEDAP_MODE', '')
+if '--mode' in sys.argv:        # where the environment does not reach (a remote host): the argument
+    _modes += ',' + sys.argv[sys.argv.index('--mode') + 1]
+for part in _modes.split(','):
     part = part.strip()
     if not part:
         continue
@@ -597,6 +600,12 @@ def listen(where):
     log('accepted')
     inp = conn.makefile('rb')
     out = conn.makefile('wb')
+    if 'mixed-out' in MODE:
+        # a partial line on standard output, a whole one on the error output, then the rest
+        for stream, text in ((sys.stdout, 'part'), (sys.stderr, 'diag\n'), (sys.stdout, 'ial\n')):
+            stream.write(text)
+            stream.flush()
+            time.sleep(0.2)
 
 
 def main():
