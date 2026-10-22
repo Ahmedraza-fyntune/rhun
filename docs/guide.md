@@ -1467,9 +1467,16 @@ filters (such as Python's "Uncaught Exceptions").
 
 | Debugger | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
+| lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | tested (Ubuntu 24.04's lldb-dap-18, on the release workflow's runner); needs a native machine (no ptrace in Docker under Rosetta) | not tested |
 | Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+Ubuntu's lldb-dap (lldb-dap-18 and later) looks up the debug info of the libraries a program loads
+on https://debuginfod.ubuntu.com (its default, also when `DEBUGINFOD_URLS` is unset) and answers the
+launch only after: where that server is slow or unreachable, the session stays "configuring" for
+the debuginfod timeout (90 s) before the program starts. To turn the lookups off for a
+configuration, add `initCommands = "settings clear plugin.symbol-locator.debuginfod.server-urls"`
+when the debugger takes `initCommands`.
 
 In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
 reached over TCP (`transport = tcp`, as Delve is) listens on a port free on the host's loopback, and the host makes
