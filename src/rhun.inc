@@ -1671,6 +1671,9 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_FILE_DIAGNOSTICS, "file-diagnostics", 0  # file-diagnostics into the Problems store
     FEATURE FEAT_HIERARCHY, "hierarchy", 1            # call/type hierarchies in the Results panel
     FEATURE FEAT_HOVER_QUERY, "hover-query", 1        # the hover card (hovercard.s)
+    FEATURE FEAT_SELECTION_RANGES, "selection-ranges", 1  # Expand/Shrink Selection (selrange.s)
+    FEATURE FEAT_WORKSPACE_SYMBOLS, "workspace-symbols", 1  # Go to Symbol in Project (wsym.s)
+    FEATURE FEAT_DOCUMENT_LINKS, "document-links", 1  # links under ctrl+click (doclinks.s)
     # editor presentation (deco.s ...)
     FEATURE FEAT_DECORATIONS, "decorations", 0    # decoration-type, decorate, the visible event
     # workspace edits and the editor model (wsedit.s, wstx.s, wsdisk.s, wsops.s, editorsel.s):

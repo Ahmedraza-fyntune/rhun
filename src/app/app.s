@@ -2853,6 +2853,7 @@ timeout_fns:
     .quad outline_timeout       # language features: the Outline's debounce (outline.s)
     .quad hovercard_timeout     # and the hover card's rest, show time and grace (hovercard.s)
     .quad lightbulb_timeout     # and the lightbulb's rest (lightbulb.s)
+    .quad wsym_timeout          # and the symbol query's debounce (wsym.s)
     .quad ext_provider_timeout
     .quad save_timeout
     .quad uproc_timeout
@@ -3491,7 +3492,8 @@ FN center_draw
     mov edx, [rip + g_editor_rect + 8]
     mov ecx, [rip + g_editor_rect + 12]
     call editor_draw
-    call peek_draw              # language features: the peek view over the text (peek.s)
+    call doclinks_draw             # language features: the link under ctrl, underlined (doclinks.s)
+    call peek_draw              # and the peek view over the text (peek.s)
     call find_draw
     EPILOGUE
 

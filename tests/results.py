@@ -72,6 +72,28 @@ class Results(lang.Lang):
         self.assertNotIn('searching', head[1])
         self.assertTrue(all(l.startswith('set=1/1') for l in head), head)
 
+    def test_progress_shows_in_the_title_and_cancel_keeps_what_came(self):
+        root = self.provider({'hello': 'hello 1 references query-stream', 'answers': {
+            'references': {'progress': [[45, 'Indexing', 0.05]],
+                           'parts': [['1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {'), 0.05]],
+                           'delay': 3.0, 'body': '0\n'}}}, 'references = *.rs\n')
+        out = self.run_lang(root, self.at_total() + ['cmd references', 'wait 500', 'print-results',
+                                                     'cmd cancel_query', 'wait 200', 'print-results',
+                                                     'print-langstats fake/lang'])
+        head = [l for l in out if l.startswith('set=')]
+        self.assertIn('title=1 reference to total  (searching...) fake/lang 45% Indexing', head[0])
+        self.assertTrue(head[1].endswith('title=1 reference to total'), head)
+        self.assertEqual(self.stats(out, 'references')['cancelled'], '1', out)
+
+    def test_find_in_files_moves_its_results_here(self):
+        root = self.provider({'hello': 'hello 1'}, 'definition = *.go\n')
+        out = self.run_lang(root, ['key ctrl+shift+f', 'type total', 'wait-grep', 'wait 100', 'key ctrl+Return',
+                                   'wait 100', 'print-results', 'key F4', 'print-state'])
+        head = [l for l in out if l.startswith('set=')]
+        self.assertTrue(head and 'kind=find' in head[0] and 'title=3 results for total' in head[0], out)
+        state = [l for l in out if l.startswith('tabs=')][-1]
+        self.assertIn('line=2 col=14 sel=5', state)
+
     def test_sets_are_kept_and_dropped(self):
         root = self.provider({'hello': 'hello 1 references', 'answers': {
             'references': {'body': '1\n' + loc('{path}', 1, 4, 1, 8, 'fn main() {')}}}, 'references = *.rs\n')
