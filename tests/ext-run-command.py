@@ -42,6 +42,14 @@ class RunCommand(contribhost.Contrib):
             'ok 1 0', 'ok 2 0', 'error 3 syntax cannot parse the line',
             'error 4 refused not a command an extension may run', 'error 5 needs terminal=yes'])
 
+    def test_task_commands_need_terminal_run(self):
+        # v1's terminal = yes (suggest) lets the terminal built-ins run, not the task commands
+        self.run_editor(exts=self.exts({'rt': ['run-command run_task 0']},
+                                       needs='documents = write\nterminal = yes'),
+                        files=('c.txt',), drop_waits=True,
+                        actions=['cmd demo.rt', 'wait-ext demo running', 'wait 300'])
+        self.assertEqual(self.answers(self.contrib_log()), ['error 1 needs terminal=run'])
+
     def test_needs_documents_write(self):
         self.run_editor(exts=self.exts({'tc': ['run-command toggle_comment 0']}, needs=''),
                         files=('c.txt',), drop_waits=True,
@@ -78,6 +86,18 @@ class RunCommand(contribhost.Contrib):
         self.run_editor(exts=self.exts({'ask': ['run-command peer.echo 0']}, call='error'),
                         drop_waits=True, actions=['cmd demo.ask', 'wait-ext demo running', 'wait 800'])
         self.assertEqual(self.answers(self.contrib_log()), ['error 1 refused nope'])
+
+    def test_goto_line_clamps_a_huge_column(self):
+        out = self.run_editor(exts=self.exts({'go': [('run-command goto_line #', '2 18446744073709551615')]}),
+                              files=('c.txt',), drop_waits=True,
+                              actions=['cmd demo.go', 'wait-ext demo running', 'wait 300', 'print-state'])
+        line2 = (self.proj / 'c.txt').read_text(encoding='utf-8').split('\n')[1]
+        self.assertIn('line=2 col=%d' % (len(line2.encode()) + 1), out[0])
+
+    def test_long_error_text_is_relayed_whole(self):
+        self.run_editor(exts=self.exts({'ask': ['run-command peer.echo 0']}, call='long-error'),
+                        drop_waits=True, actions=['cmd demo.ask', 'wait-ext demo running', 'wait 800'])
+        self.assertEqual(self.answers(self.contrib_log()), ['error 1 refused ' + 'é' * 150 + 'x' * 100 + ' end'])
 
     def test_result_over_one_mib(self):
         self.run_editor(exts=self.exts({'ask': ['run-command peer.echo 0']}, call='big'),

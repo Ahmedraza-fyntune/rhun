@@ -10,7 +10,9 @@ F N_dir, 4
 F N_open, 4
 F N_loaded, 4
 F N_depth, 4
-F N_icon, 4                      # file_icon's icon | color slot << 8 | 0x80000000, 0 until drawn
+F N_icon, 4                      # its icon: icon | color slot << 8, or an iconth.s value; | 0x80000000
+                                 # (| 0x10000000 a folder's while open); 0 until drawn
+F N_igen, 4                      # iconth_gen when N_icon was looked up
 ENDSTRUCT N_SIZE
 
 .equ ID_EXP_ROW, 0x300000         # + row: a range of its own, as the tree has no end
@@ -32,6 +34,7 @@ menu_y: .long 0
 menu_press: .long 0             # the presses of the frame that opened the menu
 .p2align 3
 menu_list: .quad 0
+root_multi: .long 0             # resources group: the root's children are the workspace folders
 .globl g_explorer_dir, g_explorer_target, g_exp_reveal
 g_exp_reveal: .long 0             # reveal the active file on the next draw
 g_explorer_dir: .zero 4096
@@ -427,11 +430,15 @@ FN explorer_set_root
     mov rdi, [rip + root]
     call node_free
     mov qword ptr [rip + root], 0
+    mov dword ptr [rip + root_multi], 0
     mov dword ptr [rip + exp_scroll], 0
     mov dword ptr [rip + exp_cursor], 0
     mov rsi, [rip + g_project]
     test rsi, rsi
     jz 9f
+    call wfold_count            # resources group: two workspace folders or more are roots of their own
+    cmp eax, 2
+    jae .Lsr_folders
     mov rdi, rsi
     call strlen
     mov rdi, [rip + g_project]
@@ -452,6 +459,52 @@ FN explorer_set_root
     call rebuild_rows
 9:  mov dword ptr [rip + g_dirty], 1
     EPILOGUE
+.Lsr_folders:
+    # a root that is no folder: each workspace folder a row of its own (open), its tree under it
+    mov dword ptr [rip + root_multi], 1
+    lea rdi, [rip + .Lempty_name]
+    call dup_cstr
+    mov rdx, rax
+    xor edi, edi
+    lea rsi, [rip + .Lempty_name]
+    mov ecx, 1
+    call node_new
+    mov [rip + root], rax
+    mov rbx, rax
+    mov dword ptr [rbx + N_depth], -1
+    mov dword ptr [rbx + N_open], 1
+    mov dword ptr [rbx + N_loaded], 1
+    xor r12d, r12d
+1:  call wfold_count
+    cmp r12, rax
+    jae 2f
+    mov rdi, r12
+    call wfold_path
+    mov rdi, rax
+    call dup_cstr
+    mov r13, rax
+    mov rdi, r12
+    call wfold_name
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, r13
+    mov ecx, 1
+    call node_new
+    mov r14, rax
+    mov dword ptr [r14 + N_open], 1
+    lea rdi, [rbx + N_kids]
+    mov esi, 8
+    call vec_push
+    mov [rax], r14
+    mov rdi, r14
+    call node_load
+    mov rdi, [r14 + N_path]
+    call watch_dir
+    inc r12
+    jmp 1b
+2:  call rebuild_rows
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
 
 # explorer_refresh(): reload the tree, keep expanded folders
 FN explorer_refresh
@@ -459,6 +512,8 @@ FN explorer_refresh
     mov rbx, [rip + root]
     test rbx, rbx
     jz 9f
+    cmp dword ptr [rip + root_multi], 0
+    jne .Lrf_folders
     # remember open dirs
     xor r12d, r12d
 1:  cmp r12, [rip + openset + VEC_len]
@@ -488,6 +543,58 @@ FN explorer_refresh
     call reopen
     call rebuild_rows
 9:  mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+.Lrf_folders:
+    # workspace folders: each folder's tree is read again, its open folders kept open
+    call rf_openset
+    xor r12d, r12d
+1:  cmp r12, [rbx + N_kids + VEC_len]
+    jae 2f
+    mov rax, [rbx + N_kids + VEC_ptr]
+    mov r13, [rax + r12*8]
+    inc r12
+    mov rdi, r13
+    call rf_reload
+    jmp 1b
+2:  call rebuild_rows
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
+# rf_openset(): openset = the open folders of the tree (rbx the root)
+rf_openset:
+    PROLOGUE
+    mov r13, rbx
+    xor r12d, r12d
+1:  cmp r12, [rip + openset + VEC_len]
+    jae 2f
+    mov rax, [rip + openset + VEC_ptr]
+    mov rdi, [rax + r12*8]
+    call mem_free
+    inc r12
+    jmp 1b
+2:  mov qword ptr [rip + openset + VEC_len], 0
+    mov rdi, r13
+    call collect_open
+    EPILOGUE
+
+# rf_reload(node): a folder's children read again, the open ones in openset opened again
+rf_reload:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + N_kids + VEC_len]
+    jae 2f
+    mov rax, [rbx + N_kids + VEC_ptr]
+    mov rdi, [rax + r12*8]
+    call node_free
+    inc r12
+    jmp 1b
+2:  mov qword ptr [rbx + N_kids + VEC_len], 0
+    mov dword ptr [rbx + N_loaded], 0
+    mov rdi, rbx
+    call node_load
+    mov rdi, rbx
+    call reopen
     EPILOGUE
 
 # toggle(node)
@@ -1113,7 +1220,14 @@ FN explorer_body_draw
     lea rax, [rip + menu_items]
     push rax
     push rax
-    cmp dword ptr [r14 + N_dir], 0
+    cmp dword ptr [rip + root_multi], 0  # resources group: a workspace folder's own row
+    je 49f
+    cmp dword ptr [r14 + N_depth], 0
+    jne 49f
+    lea rax, [rip + menu_items_folder]
+    mov [rsp], rax
+    jmp 50f
+49: cmp dword ptr [r14 + N_dir], 0
     jne 50f
     mov rdi, [r14 + N_path]
     call git_status_of
@@ -1202,48 +1316,95 @@ FN explorer_body_draw
     call icon_draw
 55: add r15d, [rip + g_mt + 4*MI_16]
     add r15d, [rip + g_mt + 4*MI_2]
-    M ecx, MI_16
-    mov edi, IC_FOLDER
-    COLOR r8d, T_ACCENT
-    cmp dword ptr [r14 + N_dir], 0
-    jne 57f
-    # a file: the icon of its name and type, looked up once
+    # its icon: the file icon theme's, else rhun's (iconth.s); looked up once per theme and state
+    call iconth_gen
+    mov edx, eax
     mov eax, [r14 + N_icon]
+    cmp edx, [r14 + N_igen]
+    jne 50f
     test eax, eax
-    jnz 56f
+    jz 50f
+    cmp dword ptr [r14 + N_dir], 0
+    je 56f
+    mov ecx, eax
+    shr ecx, 28
+    and ecx, 1
+    cmp ecx, [r14 + N_open]
+    je 56f
+50: mov [r14 + N_igen], edx
+    cmp dword ptr [r14 + N_dir], 0
+    je 51f
     mov rdi, [r14 + N_name]
-    push rcx
+    mov esi, [r14 + N_open]
+    call iconth_folder
+    cmp eax, ITV_RHUN
+    jne 52f
+    mov eax, IC_FOLDER | (T_ACCENT << 8)
+    jmp 52f
+51: mov rdi, [r14 + N_name]
+    call iconth_file
+    cmp eax, ITV_RHUN
+    jne 52f
+    mov rdi, [r14 + N_name]
     call file_icon
-    pop rcx
     shl edx, 8
     or eax, edx
-    or eax, 0x80000000
-    mov [r14 + N_icon], eax
-56: mov edi, eax
-    and edi, 0xff
-    shr eax, 8
-    and eax, 0xff
-    lea rdx, [rip + g_theme]
-    mov r8d, [rdx + rax*4]
-57: mov esi, r15d
+52: or eax, 0x80000000
+    cmp dword ptr [r14 + N_dir], 0
+    je 53f
+    cmp dword ptr [r14 + N_open], 0
+    je 53f
+    or eax, 0x10000000
+53: mov [r14 + N_icon], eax
+56: M ecx, MI_16
+    mov esi, r15d
     mov edx, ebx
     sub edx, ecx
     sar edx, 1
     add edx, r13d
+    test eax, ITV_NONE
+    jnz 59f
+    test eax, ITV_IMAGE
+    jz 57f
+    mov [rsp + 52], esi
+    mov [rsp + 56], edx
+    mov edi, eax
+    call iconth_draw
+    test eax, eax
+    jnz 59f
+    # a picture that cannot be shown: rhun's icon
+    mov eax, IC_FOLDER | (T_ACCENT << 8)
+    cmp dword ptr [r14 + N_dir], 0
+    jne 571f
+    mov rdi, [r14 + N_name]
+    call file_icon
+    shl edx, 8
+    or eax, edx
+571:M ecx, MI_16
+    mov esi, [rsp + 52]
+    mov edx, [rsp + 56]
+57: mov edi, eax
+    and edi, 0xff
+    shr eax, 8
+    and eax, 0xff
+    lea r8, [rip + g_theme]
+    mov r8d, [r8 + rax*4]
     call icon_draw
+59:
     add r15d, [rip + g_mt + 4*MI_20]
     add r15d, [rip + g_mt + 4*MI_2]
-    # git: name in the status color, the letter at the right for files
+    # git (or another version control system's provider, scmpanel.s): name in the status color,
+    # the letter at the right for files
     mov rdi, [r14 + N_path]
-    call git_status_of
+    call vcs_status_of
     mov [rsp + 32], eax
     mov [rsp + 36], edx
+    mov [rsp + 40], ecx
+    test eax, eax
+    jnz 58f
     COLOR eax, T_PANEL_FG
-    mov edi, [rsp + 32]
-    test edi, edi
-    jz 58f
-    call git_code_color
-58: mov [rsp + 40], eax
+    mov [rsp + 40], eax
+58:
     mov rdi, [r14 + N_name]
     call strlen
     mov r9, rax
@@ -1739,6 +1900,8 @@ FN menu_print
 9:  EPILOGUE
 
 .section .rodata
+.Lm_remove_folder: .asciz "Remove Folder from Workspace"
+.Lempty_name: .asciz ""
 .Lheader: .asciz "EXPLORER"
 .ifdef MACOS
 .Lno_folder: .asciz "No folder open (\342\207\247\342\214\230O)"
@@ -1779,3 +1942,6 @@ menu_items_git:
 menu_items_root:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, copy_project_path
     .quad .Lm_reveal, reveal_project, 0, 0
+menu_items_folder:              # resources group: a workspace folder's row
+    .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, cmd_copy_path
+    .quad .Lm_reveal, cmd_reveal_file, .Lm_remove_folder, cmd_remove_workspace_folder, 0, 0

@@ -28,6 +28,15 @@ class Notes(ViewsBase):
         self.assertIn('0 notify 1 closed', self.fake_log())
         self.assertIn('0 features view-tree view-log notify progress', self.fake_log())
 
+    def test_the_pointer_over_a_card_holds_it_without_redraws(self):
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', 'print-notes'])
+        note = self.notes(out)[0]
+        x, y = map(int, note.split(' at=')[1].split(' ')[0].split(','))
+        out = self.run_editor(['cmd viewfake.note', 'wait 200', f'move {x + 20} {y + 20}', 'wait 3000', 'wait 3000',
+                               'wait 3000', 'print-notes'])
+        self.assertEqual(len(self.notes(out)), 1)
+        self.assertNotIn('0 notify 1 closed', self.fake_log())
+
     def test_a_button_runs_its_command_or_says_pressed(self):
         out = self.run_editor(['cmd viewfake.noteask', 'wait 200', 'print-notes', 'note-press 0 2', 'wait 100',
                                'print-notes', 'cmd viewfake.noteask', 'wait 200', 'note-press 0 1', 'wait 300',
@@ -90,6 +99,14 @@ class Notes(ViewsBase):
         self.assertIn('0 notify 6 closed', log)
         self.assertIn('0 notify 4 closed', log)
 
+    def test_a_card_that_comes_later_is_below_the_older_ones(self):
+        out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd viewfake.noteclose1', 'wait 100',
+                               'cmd viewfake.note', 'wait 300', 'print-notes'])
+        drawn = [n for n in self.notes(out) if ' at=' in n]
+        ys = {n.split(' ')[0]: int(n.split(' at=')[1].split(',')[1].split(' ')[0]) for n in drawn}
+        self.assertIn('note=7', ys)                 # in the first card's slot, yet the newest
+        self.assertEqual(max(ys, key=ys.get), 'note=7')
+
     def test_clear_closes_every_card(self):
         out = self.run_editor(['cmd viewfake.notemany', 'wait 300', 'cmd clear_notifications', 'print-notes'])
         self.assertEqual(self.notes(out), [])
@@ -105,6 +122,50 @@ class Notes(ViewsBase):
         log = self.fake_log()
         self.assertNotIn('0 notify 1 closed', log)
         self.assertTrue(any(l.startswith('error ') and l.endswith(' noview no such notification') for l in log), log)
+
+
+class MarkdownPopups(ViewsBase):
+    """Feature markdown: notification messages and node tooltips drawn as Markdown."""
+    def setUp(self):
+        super().setUp()
+        self.env['VIEWFAKE_NOTIFY'] = '1'
+
+    def card(self, out):
+        return [l for l in out if l.startswith('note=')][0]
+
+    def test_a_message_is_markdown_with_the_feature(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        card = self.card(out)
+        self.assertIn(' markdown msg=**Indexed** 12 files', card)
+        h_md = int(card.split(' size=')[1].split('x')[1].split(' ')[0]) if ' size=' in card else None
+        del self.env['VIEWFAKE_MARKDOWN']
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        self.assertNotIn(' markdown ', self.card(out))
+        self.assertTrue(h_md is None or h_md > 0)
+
+    def test_selecting_a_markdown_message_and_copying_it(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        (self.proj / 'note.txt').write_text('', encoding='utf-8')
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        card = self.card(out)
+        x, y = map(int, card.split(' at=')[1].split(' ')[0].split(','))
+        w = int(card.split(' size=')[1].split('x')[0])
+        tx, ty = x + 32 + 2, y + 12 + 8                                 # the message's first line
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', f'move {tx} {ty}', 'down',
+                               f'move {x + w - 40} {ty}', 'up', 'wait 50', 'key ctrl+c',
+                               f'open {self.proj / "note.txt"}', 'key ctrl+v', 'wait 100', 'print-doc'])
+        self.assertTrue(any(l.startswith('Indexed 12 files') for l in out), out)
+
+    def test_a_node_tooltip_is_markdown_with_the_feature(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        out = self.run_editor(['print-view todo'])
+        row = [l for l in out if 'label=TODO: item 1 of main.rs' in l][0]
+        y = int(row.split(' y=')[1].split(' ')[0])
+        at = [l for l in out if l.startswith('at=')][0]
+        x = int(at[3:].split(',')[0])
+        out = self.run_editor([f'move {x + 60} {y + 8}', 'wait 700', 'wait 300', 'print-tip'])
+        self.assertIn('tip=tip of 1', out)
 
 
 class Progress(ViewsBase):
@@ -128,6 +189,15 @@ class Progress(ViewsBase):
                                'print-notes'])
         self.assertIn('progress=1 where=note percent=- cancel=2 shown=1 title=Downloading', out)
         self.assertIn('0 progress 1 cancel', self.fake_log())
+
+    def test_enter_does_not_cancel_progress_without_cancel(self):
+        self.run_editor(['cmd viewfake.prognote2', 'wait 700', 'cmd focus_notifications', 'key Return', 'wait 100'])
+        self.assertFalse(any(l.endswith(' cancel') and l.startswith('0 progress ') for l in self.fake_log()))
+
+    def test_an_id_past_31_bits_is_no_such_thing(self):
+        self.env['VIEWFAKE_PIC'] = '1'
+        self.run_editor(['cmd viewfake.bigunimage', 'wait 200'])
+        self.assertTrue(any(l.endswith('noview no such image') for l in self.fake_log()))
 
     def test_progress_in_a_view(self):
         out = self.run_editor(['cmd viewfake.progview', 'wait 200', 'print-views', 'cmd viewfake.progend', 'wait 200',

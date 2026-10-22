@@ -73,9 +73,9 @@ FN pres_free
     xor r13d, r13d              # the folds' collapsed texts
 1:  cmp r13, [r12 + PRS_folds + VEC_len]
     jae 2f
-    imul rax, r13, FD_SIZE
+    imul rax, r13, FLD_SIZE
     add rax, [r12 + PRS_folds + VEC_ptr]
-    mov rdi, [rax + FD_text]
+    mov rdi, [rax + FLD_text]
     call mem_free
     inc r13
     jmp 1b
@@ -86,6 +86,14 @@ FN pres_free
     lea rdi, [r12 + PRS_fr]     # a folding provider's ranges (present.s)
     call fr_vec_clear
     lea rdi, [r12 + PRS_fr]
+    call vec_free
+    mov rdi, r12                # semantic tokens (semtok.s)
+    call semtok_free
+    mov rdi, r12                # inlay hints (inlay.s)
+    call inlay_free
+    mov rdi, r12                # code lens (lens.s)
+    call lens_free
+    lea rdi, [r12 + PRS_colors] # colors (hicolor.s)
     call vec_free
     mov rdi, r12
     call mem_free
@@ -249,6 +257,18 @@ pres_shift:
     mov rdi, rbx
     mov rsi, r12
     call fold_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call semtok_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call inlay_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call lens_shift
+    mov rdi, rbx
+    mov rsi, r12
+    call color_shift
     EPILOGUE
 
 # tape_shift(value, pos, del, ins, gravity) -> rax the value after the edit (one of del and ins is

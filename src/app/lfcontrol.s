@@ -27,6 +27,14 @@ lc_rlen: .quad 0
     LCWRAP w_print_provides, c_print_provides
     LCWRAP w_print_query, c_print_query
     LCWRAP w_print_fd, c_print_fd
+    LCWRAP w_print_results, c_print_results
+    LCWRAP w_print_outline, c_print_outline
+    LCWRAP w_print_peek, c_print_peek
+    LCWRAP w_print_hover_card, c_print_hover_card
+    LCWRAP w_hover_at, c_hover_at
+    LCWRAP w_print_lightbulb, c_print_lightbulb
+    LCWRAP w_print_doc_links, c_print_doc_links
+    LCWRAP w_print_point, c_print_point
 
 # lc_arg() -> rax ptr, rdx len of the next word of the rest (rdx 0 at its end)
 lc_arg:
@@ -117,6 +125,111 @@ c_print_fd:
     pop rbx
     ret
 
+# print-results: the Results panel's shown set and its rows (results.s)
+c_print_results:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call results_dump
+    pop rbx
+    ret
+
+# print-outline: the Outline section's rows (outline.s)
+c_print_outline:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call outline_dump
+    pop rbx
+    ret
+
+# print-peek: the peek view (peek.s)
+c_print_peek:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call peek_dump
+    pop rbx
+    ret
+
+# print-hover-card: the hover card (hovercard.s)
+c_print_hover_card:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call hovercard_dump
+    pop rbx
+    ret
+
+# hover-at LINE COL: the pointer over that place of the editor's text
+c_hover_at:
+    push rbx
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rbx, rax
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rsi, rax
+    mov rdi, rbx
+    call hovercard_point
+    pop rbx
+    ret
+
+# print-lightbulb: the lightbulb (lightbulb.s)
+c_print_lightbulb:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call lightbulb_dump
+    pop rbx
+    ret
+
+# print-links: the document links held (doclinks.s)
+c_print_doc_links:
+    push rbx
+    mov rdi, [rip + lc_out]
+    call doclinks_dump
+    pop rbx
+    ret
+
+# print-point LINE COL: "point X Y", the window pixel of that place of the editor's text
+c_print_point:
+    push rbx
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rbx, rax
+    call lc_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    mov rsi, rax
+    mov rdi, rbx
+    call hovercard_xy
+    test eax, eax
+    js 9f
+    mov ebx, edx
+    push rax
+    push rax
+    mov rdi, [rip + lc_out]
+    lea rsi, [rip + .Lpoint]
+    call sb_push_cstr
+    pop rsi
+    pop rsi
+    mov rdi, [rip + lc_out]
+    call sb_push_u64
+    mov rdi, [rip + lc_out]
+    mov esi, ' '
+    call sb_push_byte
+    mov rdi, [rip + lc_out]
+    mov esi, ebx
+    call sb_push_u64
+    mov rdi, [rip + lc_out]
+    mov esi, 10
+    call sb_push_byte
+9:  pop rbx
+    ret
+
 # print-query: the requests rhun waits on, with their progress
 c_print_query:
     push rbx
@@ -131,6 +244,15 @@ c_print_query:
 .Lc_print_provides: .asciz "print-provides"
 .Lc_print_query: .asciz "print-query"
 .Lc_print_fd: .asciz "print-file-diagnostics"
+.Lc_print_results: .asciz "print-results"
+.Lc_print_outline: .asciz "print-outline"
+.Lc_print_peek: .asciz "print-peek"
+.Lc_print_hover_card: .asciz "print-hover-card"
+.Lc_hover_at: .asciz "hover-at"
+.Lc_print_lightbulb: .asciz "print-lightbulb"
+.Lc_print_doc_links: .asciz "print-doc-links"
+.Lc_print_point: .asciz "print-point"
+.Lpoint: .asciz "point "
 .p2align 3
 .globl langfeat_ctl
 langfeat_ctl:
@@ -138,4 +260,12 @@ langfeat_ctl:
     .quad .Lc_print_provides, w_print_provides
     .quad .Lc_print_query, w_print_query
     .quad .Lc_print_fd, w_print_fd
+    .quad .Lc_print_results, w_print_results
+    .quad .Lc_print_outline, w_print_outline
+    .quad .Lc_print_peek, w_print_peek
+    .quad .Lc_print_hover_card, w_print_hover_card
+    .quad .Lc_hover_at, w_hover_at
+    .quad .Lc_print_lightbulb, w_print_lightbulb
+    .quad .Lc_print_doc_links, w_print_doc_links
+    .quad .Lc_print_point, w_print_point
     .quad 0, 0

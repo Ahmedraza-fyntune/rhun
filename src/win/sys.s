@@ -229,6 +229,10 @@ FN ws_close
     test rax, rax
     jz .Lclose_bad
     mov rbx, rax
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    je .Lclose_chan
+    cmp dword ptr [rbx + FD_kind], WSK_KIND
+    je .Lclose_sock
     cmp dword ptr [rbx + FD_kind], FD_PTY
     je .Lclose_pty
     cmp dword ptr [rbx + FD_kind], FD_SLAVE
@@ -255,6 +259,15 @@ FN ws_close
     mov rdi, rbx
     call win_pty_close
     jmp .Lclose_clear
+.Lclose_chan:
+    mov rdi, rbx
+    call win_chan_close
+    xor eax, eax
+    EPILOGUE
+.Lclose_sock:
+    mov rdi, rbx
+    call win_sock_close
+    EPILOGUE
 .Lclose_bad:
     mov rax, -9
     EPILOGUE
@@ -267,7 +280,21 @@ FN ws_read
     test rax, rax
     jz .Lread_bad
     mov rbx, rax
-    cmp dword ptr [rbx + FD_kind], FD_WATCH
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    jne 10f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call win_chan_read
+    EPILOGUE
+10: cmp dword ptr [rbx + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rbx
+    mov rsi, r12
+    mov rdx, r13
+    call win_sock_read
+    EPILOGUE
+11: cmp dword ptr [rbx + FD_kind], FD_WATCH
     jne 1f
     mov rdi, r12
     mov rsi, r13
@@ -346,7 +373,21 @@ FN ws_write
     call win_fd
     test rax, rax
     jz 8f
-    cmp dword ptr [rax + FD_kind], FD_PTY
+    cmp dword ptr [rax + FD_kind], FD_CHAN
+    jne 10f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call win_chan_write
+    EPILOGUE
+10: cmp dword ptr [rax + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call win_sock_write
+    EPILOGUE
+11: cmp dword ptr [rax + FD_kind], FD_PTY
     jne 1f
     mov rdi, rax
     mov rsi, r12
@@ -1196,8 +1237,14 @@ FN ws_fcntl
     mov rbx, rax
     cmp r13d, 3                # F_GETFL: report only the last committed native/software state.
     je 2f
+    test r13d, r13d             # F_DUPFD (remote windows: a channel's second descriptor, a log's copy)
+    je .Lfcntl_dup
+    cmp r13d, 1030              # F_DUPFD_CLOEXEC
+    je .Lfcntl_dup
     cmp r13d, F_SETFL
     jne 1f
+    cmp dword ptr [rbx + FD_kind], WSK_KIND
+    je .Lfcntl_sock
     cmp dword ptr [rbx + FD_kind], FD_PIPE
     jne 3f
     cmp dword ptr [rbx + FD_wend], 0
@@ -1223,6 +1270,48 @@ FN ws_fcntl
     EPILOGUE
 8:  mov rax, -9
     EPILOGUE
+.Lfcntl_sock:
+    # a socket: O_NONBLOCK switches its mode (FIONBIO)
+    mov rdi, rbx
+    mov esi, r12d
+    call win_sock_setfl
+    EPILOGUE
+.Lfcntl_dup:
+    cmp dword ptr [rbx + FD_kind], FD_CHAN
+    jne 1f
+    mov rdi, rbx
+    call win_chan_dup
+    EPILOGUE
+1:  cmp dword ptr [rbx + FD_kind], WSK_KIND
+    jne 11f
+    mov rdi, rbx
+    call win_sock_dup
+    EPILOGUE
+11: mov rax, -22
+    cmp dword ptr [rbx + FD_kind], FD_FILE
+    jne 9f
+    # a file: its handle duplicated, the copy a descriptor of its own
+    mov rcx, -1                 # GetCurrentProcess()
+    mov rdx, [rbx + FD_handle]
+    mov r8, -1
+    lea r9, [rsp + 104]
+    mov qword ptr [rsp + 32], 0
+    mov qword ptr [rsp + 40], 0
+    mov qword ptr [rsp + 48], 2 # DUPLICATE_SAME_ACCESS
+    API DuplicateHandle
+    test eax, eax
+    jz 7b
+    mov rdi, [rsp + 104]
+    mov esi, FD_FILE
+    mov edx, [rbx + FD_flags]
+    call win_fd_alloc
+    test rax, rax
+    jns 9f
+    mov [rsp + 96], rax
+    mov rcx, [rsp + 104]
+    API CloseHandle
+    mov rax, [rsp + 96]
+9:  EPILOGUE
 
 FN ws_getdents
     PROLOGUE 9120

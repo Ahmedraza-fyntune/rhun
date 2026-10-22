@@ -211,7 +211,7 @@ FN extres_req_answer
     mov rsi, r12
     call req_find
     test rax, rax
-    js .Lra_dropped
+    js 9f                       # not one this module saw go out: not counted
     mov r15, rax
     imul rax, rax, ELQ_SIZE
     lea r14, [rbx + EL_req + rax]
@@ -240,11 +240,10 @@ FN extres_req_answer
     mov rsi, r15
     call req_remove
     EPILOGUE
-.Lra_dropped:
-    inc dword ptr [rbx + EL_dropped]
 9:  EPILOGUE
 
-# expire(row, now): requests nobody answered for 10 s are dropped (their modules gave up)
+# expire(row, now): requests nobody answered for 120 s are dropped: every module rhun has gave up on
+# them by then (rename waits 15 s, tests-resolve 30 s), and until then they hold an idle extension
 expire:
     PROLOGUE
     mov rbx, rdi
@@ -255,7 +254,7 @@ expire:
     imul rax, r13, ELQ_SIZE
     mov rcx, r12
     sub rcx, [rbx + EL_req + rax + ELQ_t]
-    cmp rcx, 10000
+    cmp rcx, 120000
     jb 2f
     inc dword ptr [rbx + EL_dropped]
     mov rdi, rbx
@@ -1575,6 +1574,9 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
     .quad .Lc_link_deliver, c_link_deliver, .Lc_print_links, c_print_links
     .quad .Lc_print_file_runs, c_print_file_runs
     .quad .Lc_print_ext_setting, c_print_ext_setting
+    .quad .Lc_print_folders, c_print_folders, .Lc_folder_add, c_folder_add
+    .quad .Lc_folder_remove, c_folder_remove, .Lc_workspace_save, c_workspace_save
+    .quad .Lc_print_repos, c_print_repos, .Lc_repo_show, c_repo_show
     .quad 0, 0
 .Lv_complete: .asciz "complete"
 .Lq_complete: .asciz "completion"
@@ -1600,6 +1602,12 @@ res_commands:   # headless commands of the group (control.s ctl_tables): fn(out,
 .Lc_print_links: .asciz "print-links"
 .Lc_print_file_runs: .asciz "print-file-runs"
 .Lc_print_ext_setting: .asciz "print-ext-setting"
+.Lc_print_folders: .asciz "print-folders"
+.Lc_folder_add: .asciz "folder-add"
+.Lc_folder_remove: .asciz "folder-remove"
+.Lc_workspace_save: .asciz "workspace-save"
+.Lc_print_repos: .asciz "print-repos"
+.Lc_repo_show: .asciz "repo-show"
 .Lr_idle: .asciz "idle"
 .Lk_open_urls: .asciz "open_urls"
 .Lv_yes: .asciz "yes"

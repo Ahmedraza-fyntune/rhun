@@ -35,6 +35,8 @@ F WFD_kind, 4                       # 0 free, 1 standard stream, 2 directory, 3 
 F WFD_flags, 4                      # fdflags: 1 append, 4 nonblock
 F WFD_host, 4                       # the host's descriptor (standard streams, files)
 F WFD_write, 4                      # writing allowed
+F WFD_resize, 4                     # files: fd_filestat_set_size allowed (asked for, writable folder)
+F WFD_pad2, 4
 F WFD_path, 8                       # directories: the host path (allocated)
 F WFD_root, 8                       # directories: the allowed folder it is in
 F WFD_rootreal, 8                   # directories: that folder's real path (links resolved)
@@ -1100,8 +1102,9 @@ w_fd_filestat_set_size:
     cmp dword ptr [rax + WFD_kind], 3
     jne 9f
     mov ecx, WE_NOTCAPABLE
-    cmp dword ptr [rax + WFD_write], 0
-    je 9f
+    mov edx, [rax + WFD_write]
+    or edx, [rax + WFD_resize]
+    jz 9f
     mov edi, [rax + WFD_host]
     mov rsi, [r12 + 8]
     SYS SYS_ftruncate
@@ -1384,14 +1387,25 @@ w_path_open:
     cmp dword ptr [rsp + 8], 0
     je 9f
 2:  # host flags
+    xor r15d, r15d                  # resizing only (fd_filestat_set_size without fd_write)
     mov esi, O_CLOEXEC
     test r13d, r13d
-    jz 3f
+    jz 25f
     mov rax, [r12 + 40]
     or esi, O_WRONLY
     test rax, (1 << 1) | (1 << 14)
     jz 3f
     xor esi, O_WRONLY ^ O_RDWR
+    jmp 3f
+25: # the right to resize asked for under a writable folder: open to read and write when this
+    # user may (Go asks for it in every open, so it is a wish, not a need: see the open below)
+    mov rax, [r12 + 40]
+    test rax, 1 << 22
+    jz 3f
+    cmp dword ptr [rsp + 8], 0
+    je 3f
+    mov r15d, 1
+    or esi, O_RDWR
 3:  mov eax, [r12 + 32]
     test eax, 1
     jz 31f
@@ -1425,12 +1439,24 @@ w_path_open:
     mov ecx, WE_NOTCAPABLE
     test eax, eax
     jnz 9f
-37: lea rdi, [rip + wasi_path_buf]
+37: mov [rsp + 24], esi
+    lea rdi, [rip + wasi_path_buf]
+    mov edx, 0644
+    SYS SYS_open
+    test rax, rax
+    jns 371f
+    test r15d, r15d
+    jz 8f
+    # a file this user cannot write (or a directory) opens to read, without the resizing
+    xor r15d, r15d
+    mov esi, [rsp + 24]
+    and esi, ~3
+    lea rdi, [rip + wasi_path_buf]
     mov edx, 0644
     SYS SYS_open
     test rax, rax
     js 8f
-    mov r14d, eax
+371: mov r14d, eax
     # what was opened: its real path is inside, or it is closed again
     lea rdi, [rip + wasi_path_buf]
     lea rsi, [rip + wasi_real_buf]
@@ -1498,6 +1524,7 @@ w_path_open:
     mov dword ptr [rbx + WFD_kind], 3
     mov [rbx + WFD_host], r14d
     mov [rbx + WFD_write], r13d
+    mov [rbx + WFD_resize], r15d
     mov eax, [r12 + 56]
     and eax, 5
     mov [rbx + WFD_flags], eax
@@ -1883,7 +1910,11 @@ w_poll_oneoff:
     ret
 1:  cmp dword ptr [rdx + 16], 0
     jne 2f
-    sub rax, [rsp + 64 + 8]
+    cmp rax, [rsp + 64 + 8]
+    ja 3f
+    mov rax, [rsp + 16 + 8]         # already past (even before the monotonic clock began): due
+    ret
+3:  sub rax, [rsp + 64 + 8]
     add rax, [rsp + 16 + 8]
 2:  ret
 # an event for subscription rdx at events[r9] -> rdi the event

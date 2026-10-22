@@ -96,6 +96,15 @@ FN vt_line
     mov rdi, rbx
     mov rsi, r12
     call deco_line_inlays
+    mov rdi, rbx
+    mov rsi, r12
+    call inlay_line_inlays      # inlay hints (inlay.s)
+    mov rdi, rbx
+    mov rsi, r12
+    call color_line_inlays      # color swatches (hicolor.s)
+    mov rdi, rbx
+    mov rsi, r12
+    call ghost_line_inlays      # inline completion's first line (ghost.s)
 .Lvl_have:
     lea rax, [rip + vt_items]
     mov rdx, [rip + vt_n]
@@ -247,14 +256,7 @@ FN vt_x
     PROLOGUE
     mov r12, rdi
     mov r13d, esi
-    mov rdi, [rip + g_row_text]
-    mov rsi, [rip + g_row_from]
-    mov rdx, r12
-    call seg_cols
-    mov ebx, eax
     mov rcx, [rip + vr_i0]
-    cmp rcx, [rip + vr_i1]
-    jae 8f
     # VTM_CARET: an `after` inlay at the gap puts the caret before them all
     cmp r13d, VTM_CARET
     jne 2f
@@ -272,21 +274,37 @@ FN vt_x
     cmp byte ptr [rax + VI_side], VS_AFTER
     jne 1b
     mov r13d, VTM_LEFT
-2:  cmp rcx, [rip + vr_i1]
+2:  # text and inlays in one pass, as drawn: a tab's stop counts the inlays before it
+    xor ebx, ebx                # column
+    mov r14, [rip + g_row_from] # text measured up to here
+    mov r15, rcx
+3:  cmp r15, [rip + vr_i1]
     jae 8f
-    imul rax, rcx, VI_SIZE
+    imul rax, r15, VI_SIZE
     lea r8, [rip + vt_items]
     add rax, r8
-    inc rcx
     mov rdx, [rax + VI_off]
     cmp rdx, r12
-    jb 3f
+    jb 4f
     ja 8f
     cmp r13d, VTM_RIGHT
     jne 8f
-3:  add ebx, [rax + VI_cells]
-    jmp 2b
-8:  mov eax, ebx
+4:  mov rdi, [rip + g_row_text]
+    mov rsi, r14
+    mov ecx, ebx
+    mov r14, rdx
+    call seg_cols_from
+    mov ebx, eax
+    imul rax, r15, VI_SIZE
+    lea r8, [rip + vt_items]
+    add ebx, [r8 + rax + VI_cells]
+    inc r15
+    jmp 3b
+8:  mov rdi, [rip + g_row_text]
+    mov rsi, r14
+    mov rdx, r12
+    mov ecx, ebx
+    call seg_cols_from
     imul eax, [rip + g_cw]
     add eax, [rip + g_row_x]
     EPILOGUE
@@ -607,15 +625,35 @@ FN vt_hit_kind
 FN vt_hover
     PROLOGUE
     mov rbx, rdi
+    call hovercard_covers       # the hover card shows (or is about to): no tooltip beside it
+    test eax, eax
+    jnz 9f
     lea r12, [rip + vt_hit_item]
-    cmp byte ptr [r12 + VI_kind], VK_DECO
+    cmp byte ptr [r12 + VI_kind], VK_LENS
+    jne 0f
+    mov rdi, rbx                # a code lens item's tip (lens.s)
+    mov rsi, [r12 + VI_ref]
+    mov rdx, [r12 + VI_off]
+    call lens_tip
+    test rax, rax
+    jz 9f
+    jmp 2f
+0:  cmp byte ptr [r12 + VI_kind], VK_HINT
+    jne 1f
+    mov rdi, rbx                # a hint part's tooltip (inlay.s)
+    mov rsi, [r12 + VI_ref]
+    call inlay_tip
+    test rax, rax
+    jz 9f
+    jmp 2f
+1:  cmp byte ptr [r12 + VI_kind], VK_DECO
     jne 9f
     mov rdi, rbx
     mov rsi, [r12 + VI_ref]
     call deco_dr_tip
     test rax, rax
     jz 9f
-    mov r9, rax
+2:  mov r9, rax
     mov edi, ID_VT_TIP
     add edi, [r12 + VI_off]
     mov esi, [rip + g_mx]
@@ -625,6 +663,16 @@ FN vt_hover
     mov r8d, UB_HOVER
     call tip_note_text
 9:  EPILOGUE
+
+# FN vt_hit_set(kind, ref, off): the pointer is on something drawn in a line that is not an inlay
+# (a code lens item, lens.s): it becomes the hit vt_hover and vt_click look at
+FN vt_hit_set
+    lea rax, [rip + vt_hit_item]
+    mov [rax + VI_kind], dil
+    mov [rax + VI_ref], rsi
+    mov [rax + VI_off], rdx
+    mov qword ptr [rip + g_vt_hit], 1
+    ret
 
 # vt_click(doc) -> eax 1 when a press on the inlay vt_pos_at found ran its command
 FN vt_click
@@ -638,7 +686,26 @@ FN vt_click
     call fold_unfold_line
     mov eax, 1
     EPILOGUE
-1:  cmp byte ptr [r12 + VI_kind], VK_DECO
+1:  cmp byte ptr [r12 + VI_kind], VK_LENS
+    jne 11f
+    mov rdi, rbx                # a code lens item's command (lens.s)
+    mov rsi, [r12 + VI_ref]
+    mov rdx, [r12 + VI_off]
+    call lens_click
+    EPILOGUE
+11: cmp byte ptr [r12 + VI_kind], VK_SWATCH
+    jne 12f
+    mov rdi, rbx                # a swatch asks for its new color (hicolor.s)
+    mov rsi, [r12 + VI_ref]
+    call color_click
+    EPILOGUE
+12: cmp byte ptr [r12 + VI_kind], VK_HINT
+    jne 2f
+    mov rdi, rbx                # a hint part's command, place or edits (inlay.s)
+    mov rsi, [r12 + VI_ref]
+    call inlay_click
+    EPILOGUE
+2:  cmp byte ptr [r12 + VI_kind], VK_DECO
     jne 8f
     mov rdi, rbx
     mov rsi, [r12 + VI_ref]

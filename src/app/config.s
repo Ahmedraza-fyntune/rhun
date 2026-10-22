@@ -32,6 +32,19 @@ cfg_match_brackets: .long 1
 cfg_indent_guides: .long 1
 .globl cfg_folding
 cfg_folding: .long 1            # editor presentation: folding (fold.s)
+.globl cfg_semantic_highlighting
+cfg_semantic_highlighting: .long 1      # editor presentation: semantic tokens (semtok.s)
+.globl cfg_inlay_hints
+cfg_inlay_hints: .long 1        # editor presentation: inlay hints (inlay.s)
+.globl cfg_code_lens
+cfg_code_lens: .long 1          # editor presentation: code lens (lens.s)
+.globl cfg_highlight_occurrences
+cfg_highlight_occurrences: .long 1      # editor presentation: the caret's word's occurrences (hicolor.s)
+.globl cfg_color_swatches
+cfg_color_swatches: .long 1     # editor presentation: color swatches (hicolor.s)
+.globl cfg_inline_complete, cfg_inline_complete_delay
+cfg_inline_complete: .long 1    # editor presentation: inline completion as you type (ghost.s)
+cfg_inline_complete_delay: .long 300    # its pause after typing, ms
 cfg_cursor_blink: .long 1
 cfg_whitespace: .long 0
 cfg_sidebar: .long 1
@@ -93,6 +106,8 @@ cfg_dark_theme: .quad cfg_def_theme
 cfg_light_theme: .quad cfg_def_light_theme
 cfg_font: .quad .Lempty
 cfg_ui_font: .quad .Lempty
+.globl cfg_file_icons
+cfg_file_icons: .quad .Lempty   # [ui] file_icons: rhun (empty), none or OWNER/NAME/THEME (iconth.s)
 cfg_exclude: .quad .Ldef_exclude
 cfg_term_shell: .quad .Lempty
 cfg_term_font: .quad .Lempty
@@ -400,6 +415,7 @@ FN config_load
 2:  mov qword ptr [rip + g_keylines + VEC_len], 0
     mov dword ptr [rip + old_sources], 0
     call agentext_config_reset  # AI: the extension sources switched off come from this read
+    call ce_config_reset        # custom editors: the [editors] choices too (customed.s)
     # taken before the read: a write that lands during it still counts as a change
     call config_path
     mov rdi, rax
@@ -442,7 +458,18 @@ FN config_load
     mov rax, [rip + it + INI_vallen]
     mov [rbx + 24], rax
     jmp .Lcl_next
-1:  mov rdi, [rip + it + INI_sec]
+1:  lea rdi, [rip + it]         # custom editors: [editors] PATTERN = OWNER/NAME | text
+    lea rsi, [rip + .Leditors]
+    call ini_sec_is
+    test eax, eax
+    jz 11f
+    mov rdi, [rip + it + INI_key]
+    mov rsi, [rip + it + INI_keylen]
+    mov rdx, [rip + it + INI_val]
+    mov rcx, [rip + it + INI_vallen]
+    call ce_config_kv
+    jmp .Lcl_next
+11: mov rdi, [rip + it + INI_sec]
     mov rsi, [rip + it + INI_seclen]
     mov rdx, [rip + it + INI_key]
     mov rcx, [rip + it + INI_keylen]
@@ -701,7 +728,9 @@ FN config_save
     call sb_push_byte
     inc rbx
     jmp 6b
-7:  call config_dir
+7:  lea rdi, [rsp]              # custom editors: [editors] (customed.s)
+    call ce_config_write
+    call config_dir
     lea rdi, [rip + cfg_dir_buf]
     call mkdir_p
     call config_path
@@ -815,6 +844,7 @@ legacy_names: .quad .Ln_claude, cfg_agents_claude, .Ln_codex, cfg_agents_codex, 
 .Lrhun: .asciz "/rhun"
 .Lslash_config: .asciz "/config"
 .Lkeys: .asciz "keys"
+.Leditors: .asciz "editors"
 .Lheader: .ascii "# rhun configuration. Also editable from Settings (ctrl+,).\n"
           .asciz "# Changes are picked up while rhun is running.\n"
 .Lnl_bracket: .asciz "\n["
@@ -873,6 +903,7 @@ g_settings:
     SETTING .Ls_ui, scale, ST_INT, cfg_ui_scale, 50, 300, 10, 1, "Interface zoom", "Scales everything on top of the display scale."
     SETTING .Ls_ui, font_size, ST_INT, cfg_ui_font_size, 9, 24, 1, 0, "Interface font size", "Font size of panels, tabs and menus."
     SETTING .Ls_ui, font, ST_STR, cfg_ui_font, 0, 0, 0, 0, "Interface font", "Path to a .ttf file. Empty uses the built-in Iosevka."
+    SETTING .Ls_ui, file_icons, ST_STR, cfg_file_icons, 0, 0, 0, 0, "File icons", "rhun, none, or an extension's icon theme as OWNER/NAME/THEME (Select File Icon Theme)."
     SETTING .Ls_ui, sidebar, ST_BOOL, cfg_sidebar, 0, 1, 1, 0, "Show file explorer", "Project tree on the left (ctrl+b)."
     SETTING .Ls_ui, sidebar_width, ST_INT, cfg_sidebar_w, 140, 600, 10, 0, "Explorer width", "Width of the file explorer in points."
     SETTING .Ls_ui, agents_panel, ST_BOOL, cfg_agents, 0, 1, 1, 0, "Show agents panel", "Agent sessions on the right (ctrl+shift+a)."
@@ -909,6 +940,13 @@ g_settings:
     SETTING .Ls_editor, format_on_paste, ST_BOOL, cfg_format_on_paste, 0, 1, 1, 0, "Format pasted text", "Format the pasted lines with the formatter's range formatting."
     # editor presentation
     SETTING .Ls_editor, folding, ST_BOOL, cfg_folding, 0, 1, 1, 0, "Folding", "Fold regions from the gutter's chevrons (ctrl+shift+[ and ctrl+shift+])."
+    SETTING .Ls_editor, inline_complete, ST_BOOL, cfg_inline_complete, 0, 1, 1, 0, "Inline suggestions", "Show what an extension suggests after the cursor as you type; Tab takes it."
+    SETTING .Ls_editor, inline_complete_delay, ST_INT, cfg_inline_complete_delay, 0, 2000, 50, 0, "Inline suggestion delay (ms)", "The pause after typing before suggestions are asked for."
+    SETTING .Ls_editor, color_swatches, ST_BOOL, cfg_color_swatches, 0, 1, 1, 0, "Color swatches", "Show a small square before colors a language server finds; click it to change the color."
+    SETTING .Ls_editor, highlight_occurrences, ST_BOOL, cfg_highlight_occurrences, 0, 1, 1, 0, "Highlight occurrences", "Mark the other places of the word or symbol under the cursor."
+    SETTING .Ls_editor, code_lens, ST_BOOL, cfg_code_lens, 0, 1, 1, 0, "Code lens", "Show a row of actions and counts above lines a language server marks: references, tests."
+    SETTING .Ls_editor, inlay_hints, ST_BOOL, cfg_inlay_hints, 0, 1, 1, 0, "Inlay hints", "Show what a language server adds inside the code: types, parameter names."
+    SETTING .Ls_editor, semantic_highlighting, ST_BOOL, cfg_semantic_highlighting, 0, 1, 1, 0, "Semantic highlighting", "Color code by what a language server knows of it: types, functions, variables."
     SETTING .Ls_files, trim_trailing_whitespace, ST_BOOL, cfg_trim_trailing, 0, 1, 1, 0, "Trim trailing whitespace", "Remove spaces at line ends when saving."
     SETTING .Ls_files, final_newline, ST_BOOL, cfg_final_newline, 0, 1, 1, 0, "Final newline", "Make sure saved files end with a newline."
     SETTING .Ls_files, format_on_save, ST_BOOL, cfg_format_on_save, 0, 1, 1, 0, "Format before saving", "Use the default formatter before writing a file."

@@ -13,6 +13,7 @@ EXE = Path(os.environ.get('RHUN_TEST_EXE', ROOT / 'build/rhun')).resolve()
 
 CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n'
           '[editor]\ncursor_blink = {blink}\nword_wrap = {wrap}\n'
+          'highlight_occurrences = false\n'      # (the caret's word would light up in the wait)
           '[files]\nrestore_session = false\nrestore_project = false\n'
           '[updates]\ncheck = false\n[git]\nenabled = false\n')
 

@@ -21,9 +21,13 @@ g_nb_open_text: .long 0         # app_open_file opens the next file as text, wha
 .p2align 3
 rd_cur: .quad 0                 # the body being read: where, and its end
 rd_end: .quad 0
-rd_f: .zero 16 * 8              # the fields of its last line: ptr, len
+rd_f: .zero 16 * 16             # the fields of its last line: ptr, len (16 pairs)
 rd_n: .quad 0
 newcells: .zero VEC_SIZE        # nb-open's cells while its answer is read
+nbx_ext: .quad 0                # nb_ext_doc_at's place: the extension, the index, notebook and cell
+nbx_i: .quad 0
+nbx_nb: .quad 0
+nbx_c: .quad 0
 newmeta: .zero SB_SIZE
 tmp: .zero SB_SIZE
 langbuf: .zero 136
@@ -157,7 +161,9 @@ FN app_doc_by_id
     cmp [rax + DOC_id], rbx
     jne 1b
     jmp 9f
-8:  xor eax, eax
+8:  mov rdi, rbx                # custom editors: an owned model's stand-in (customed.s)
+    pop rbx
+    jmp ce_any_by_id
 9:  pop rbx
     ret
 
@@ -200,7 +206,7 @@ FN nb_open_tab
     mov rsi, r12
     call doc_set_path
     mov rdi, r12
-    call file_stamp
+    call vfs_stamp
     mov [rbx + DOC_mtime], rax
     mov edi, NB_SIZE
     call mem_alloc
@@ -272,6 +278,10 @@ FN nb_free
     call sb_free
     lea rdi, [rbx + NB_err]
     call sb_free
+    lea rdi, [rbx + NB_sent]
+    call vec_free
+    lea rdi, [rbx + NB_snap]
+    call vec_free
     # out of g_nbs
     xor ecx, ecx
 3:  cmp rcx, [rip + g_nbs + VEC_len]
@@ -341,6 +351,8 @@ FN nb_ext_gone
     PROLOGUE
     mov r12, rdi
     call nbexec_ext_gone        # its kernels stop
+    mov rdi, r12
+    call nb_sent_forget         # and what it heard of the cells' order
     mov rdi, r12
     xor esi, esi
     call ext_reply_cap_drop
@@ -557,19 +569,17 @@ FN nb_tick
     mov rdi, rbx
     mov rsi, rax
     call nb_req_failed
-2:  # cells are reported to no extension: their edit records are not kept (DOC_xedits)
+2:  # cells' edit records go once every extension that knows them has them (A3), as a tab's do
     xor r13d, r13d
 3:  cmp r13, [rbx + NB_cells + VEC_len]
     jae 1b
     mov rax, [rbx + NB_cells + VEC_ptr]
     mov rax, [rax + r13*8]
     inc r13
-    mov rax, [rax + NBC_doc]
-    mov rcx, [rax + DOC_xedits]
-    test rcx, rcx
-    jz 3b
-    mov qword ptr [rcx + SB_len], 0
-    mov dword ptr [rax + DOC_xresync], 0
+    mov rdi, [rax + NBC_doc]
+    cmp qword ptr [rdi + DOC_xedits], 0
+    je 3b
+    call ext_edits_clear
     jmp 3b
 9:  EPILOGUE
 
@@ -677,7 +687,21 @@ nb_opened:
     mov rsi, rax
     call nb_req_failed
     jmp 9f
-1:  # the old cells go
+1:  # a reload: edits made while it was asked for stay, and the disk warning shows
+    cmp dword ptr [rbx + NB_state], NBS_READY
+    jne 11f
+    mov rdi, rbx
+    call nb_stamp
+    cmp rax, [rbx + NB_openstamp]
+    je 11f
+    call newcells_free
+    lea rdi, [rip + newmeta]
+    call sb_free
+    mov rax, [rbx + NB_host]
+    or dword ptr [rax + DOC_flags], DF_DISK_CHANGED
+    mov dword ptr [rip + g_dirty], 1
+    jmp 9f
+11: # the old cells go
     xor r12d, r12d
 2:  cmp r12, [rbx + NB_cells + VEC_len]
     jae 3f
@@ -766,7 +790,7 @@ nb_saved:
     mov rdi, [r14 + DOC_path]
     mov rsi, r12
     mov rdx, r13
-    call file_write_all
+    call vfs_write_all
     test rax, rax
     jns 2f
     lea rdi, [rip + tmp]
@@ -781,13 +805,13 @@ nb_saved:
     jmp 9f
 2:  mov r15, [rbx + NB_host]
     mov rdi, [r15 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r15 + DOC_mtime], rax
     inc qword ptr [r15 + DOC_saves]
     and dword ptr [r15 + DOC_flags], ~DF_DISK_CHANGED
     mov qword ptr [r15 + DOC_disk_seen], 0
     mov rdi, rbx
-    call nb_mark_saved
+    call nb_mark_snapshot
     mov rax, [rbx + NB_savefn]
     test rax, rax
     jz 9f
@@ -838,7 +862,94 @@ FN nb_save_start
 FN app_save_start
     cmp qword ptr [rdi + DOC_nb], 0
     jne nb_save_start
-    jmp save_start
+    mov rax, [rdi + DOC_ce]     # custom editors: an owned model's bytes come from its extension
+    test rax, rax
+    jz 1f
+    cmp dword ptr [rax + CE_model], CEM_OWNED
+    je ce_save_start
+1:  jmp save_start
+
+# FN nb_snapshot(nb): what nb-save's body holds, taken as it is made: each cell's undo length and
+#   the notebook's revision, which the save marks saved once the file is written
+FN nb_snapshot
+    PROLOGUE
+    mov rbx, rdi
+    mov qword ptr [rbx + NB_snap + VEC_len], 0
+    mov rax, [rbx + NB_rev]
+    mov [rbx + NB_snaprev], rax
+    xor r12d, r12d
+1:  cmp r12, [rbx + NB_cells + VEC_len]
+    jae 9f
+    lea rdi, [rbx + NB_snap]
+    mov esi, 24
+    call vec_push
+    mov rcx, [rbx + NB_cells + VEC_ptr]
+    mov rcx, [rcx + r12*8]
+    mov [rax], rcx
+    mov rcx, [rcx + NBC_doc]
+    mov rdx, [rcx + DOC_undo + VEC_len]
+    mov [rax + 8], rdx
+    mov rdx, [rcx + DOC_version]
+    mov [rax + 16], rdx
+    inc r12
+    jmp 1b
+9:  EPILOGUE
+
+# nb_mark_snapshot(nb): the file holds nb_snapshot's state: the cells that still exist are saved
+#   at their snapshot's undo length, and the notebook is clean unless it changed since
+nb_mark_snapshot:
+    PROLOGUE
+    mov rbx, rdi
+    xor r12d, r12d
+1:  cmp r12, [rbx + NB_snap + VEC_len]
+    jae 4f
+    imul rax, r12, 24
+    add rax, [rbx + NB_snap + VEC_ptr]
+    inc r12
+    mov rcx, [rax]
+    xor edx, edx
+2:  cmp rdx, [rbx + NB_cells + VEC_len]
+    jae 1b                      # deleted since: nothing to mark
+    mov r8, [rbx + NB_cells + VEC_ptr]
+    cmp [r8 + rdx*8], rcx
+    je 3f
+    inc rdx
+    jmp 2b
+3:  mov rcx, [rcx + NBC_doc]
+    mov r8, [rax + 8]           # the undo length the body was made at
+    mov rdx, [rcx + DOC_version]
+    cmp rdx, [rax + 16]
+    je 31f                      # unchanged since
+    cmp r8, [rcx + DOC_undo + VEC_len]
+    jne 31f                     # typed on since (z reaches the saved text) or undone (y does)
+    mov r8, -1                  # undone and retyped to the same length: dirty
+31: mov [rcx + DOC_savepoint], r8
+    jmp 1b
+4:  mov qword ptr [rbx + NB_snap + VEC_len], 0
+    mov rax, [rbx + NB_rev]
+    cmp rax, [rbx + NB_snaprev]
+    jne 9f
+    mov dword ptr [rbx + NB_dirty], 0
+    mov rax, [rbx + NB_host]
+    mov qword ptr [rax + DOC_savepoint], 0
+9:  EPILOGUE
+
+# FN nb_stamp(nb) -> rax a number that changes with every edit of the notebook: its revision and
+#   its cells' versions
+FN nb_stamp
+    mov rax, [rdi + NB_rev]
+    imul rax, rax, 1000003
+    add rax, [rdi + NB_cells + VEC_len]
+    xor ecx, ecx
+1:  cmp rcx, [rdi + NB_cells + VEC_len]
+    jae 9f
+    mov rdx, [rdi + NB_cells + VEC_ptr]
+    mov rdx, [rdx + rcx*8]
+    mov rdx, [rdx + NBC_doc]
+    add rax, [rdx + DOC_version]
+    inc rcx
+    jmp 1b
+9:  ret
 
 # nb_mark_saved(nb): what is shown is what the file holds
 FN nb_mark_saved
@@ -906,7 +1017,7 @@ FN nb_disk_reload
     cmp qword ptr [rbx + NB_req], 0
     jne 8f
     mov rdi, [r12 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r12 + DOC_mtime], rax
     mov dword ptr [rbx + NB_want], NBR_OPEN
     call time_ms
@@ -928,7 +1039,7 @@ FN nb_reload
     jne 9f
     mov r12, [rbx + NB_host]
     mov rdi, [r12 + DOC_path]
-    call file_stamp
+    call vfs_stamp
     mov [r12 + DOC_mtime], rax
     mov dword ptr [rbx + NB_want], NBR_OPEN
     call time_ms
@@ -961,7 +1072,7 @@ FN cl_new
     call doc_new
     mov [rbx + NBC_doc], rax
     or dword ptr [rax + DOC_flags], DF_CELL
-    lea rcx, [rip + .Lcell_name]
+    lea rcx, [rip + .Lnb_cell_file]
     mov [rax + DOC_name], rcx
     mov rdi, rax
     mov rsi, r15
@@ -1038,7 +1149,11 @@ FN cl_free
     call sb_free
     mov rdi, [rbx + NBC_lang]
     call mem_free
-    mov rdi, rbx
+    mov rdi, [rbx + NBC_md]
+    test rdi, rdi
+    jz 1f
+    call md_free
+1:  mov rdi, rbx
     call mem_free
     EPILOGUE
 
@@ -1068,12 +1183,14 @@ FN nb_clear_outputs
     push r12
     mov rbx, rdi
     mov r12, rsi
+    mov dword ptr [r12 + NBC_clearwait], 0      # a clear-wait is done with, outputs or not
     cmp qword ptr [r12 + NBC_outs + VEC_len], 0
     je 9f
     mov rdi, r12
     call cl_clear_outputs
     sub [rbx + NB_outbytes], rax
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
 9:  mov dword ptr [rip + g_dirty], 1
     pop r12
     pop rbx
@@ -1126,8 +1243,26 @@ FN ou_free
     mov rdi, [rbx + NBO_img]
     call mem_free
     mov rdi, rbx
+    call ou_shown_free
+    mov rdi, rbx
     call mem_free
 9:  EPILOGUE
+
+# ou_shown_free(ou): the rich document and the picture it showed go
+ou_shown_free:
+    push rbx
+    mov rbx, rdi
+    mov rdi, [rbx + NBO_md]
+    mov qword ptr [rbx + NBO_md], 0
+    test rdi, rdi
+    jz 1f
+    call md_free
+1:  mov rdi, [rbx + NBO_pic]
+    mov qword ptr [rbx + NBO_pic], 0
+    call pic_free
+    mov qword ptr [rbx + NBO_pkey], 0
+    pop rbx
+    ret
 
 # nb_default_lang(nb) -> cstr: the language of its first code cell that names one, or 0
 FN nb_default_lang
@@ -1280,6 +1415,7 @@ FN nb_insert_cell
     call nu_push
     mov [rbx + NB_sel], r12
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     mov dword ptr [rbx + NB_reveal], 1
     mov rdi, rbx
     call nb_sync_active
@@ -1314,13 +1450,23 @@ FN nb_delete_cell
     mov r8, r13
     call nu_push
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     cmp qword ptr [rbx + NB_cells + VEC_len], 0
     jne 2f
     mov rdi, rbx
     xor esi, esi
     mov edx, NBCK_CODE
     call nb_insert_cell
-2:  mov rax, [rbx + NB_cells + VEC_len]
+    # its blank cell is part of the deletion: one z takes both back
+    dec qword ptr [rbx + NB_undo + VEC_len]
+    mov rax, [rbx + NB_undo + VEC_len]
+    dec rax
+    imul rax, rax, NBU_SIZE
+    add rax, [rbx + NB_undo + VEC_ptr]
+    mov qword ptr [rax + NBU_index2], 1
+2:  mov rdi, rbx
+    call nb_count_bytes
+    mov rax, [rbx + NB_cells + VEC_len]
     dec rax
     cmp r12, rax
     jbe 3f
@@ -1359,6 +1505,7 @@ FN nb_move_cell
     call nu_push
     mov [rbx + NB_sel], r13
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     mov dword ptr [rbx + NB_reveal], 1
     mov dword ptr [rbx + NB_layoutw], 0
     mov rdi, rbx
@@ -1426,6 +1573,7 @@ nb_kind_now:
 1:  mov rdi, r12
     call cl_set_language
     mov dword ptr [rbx + NB_dirty], 1
+    inc qword ptr [rbx + NB_rev]
     mov dword ptr [rbx + NB_layoutw], 0
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
@@ -1485,7 +1633,20 @@ FN nb_undo_op
 2:  mov [rbx + NB_sel], r13
     jmp 7f
 .Lnu_delete:
-    mov r13, [r12 + NBU_index]
+    cmp qword ptr [r12 + NBU_index2], 1
+    jne 3f
+    cmp qword ptr [rbx + NB_cells + VEC_len], 1
+    jne 3f
+    lea rdi, [rbx + NB_cells]   # the blank cell the deletion left goes
+    xor esi, esi
+    call vec_ptr_remove
+    mov rdi, rax
+    mov rax, [rdi + NBC_doc]
+    cmp rax, [rip + g_doc]
+    jne 31f
+    mov qword ptr [rip + g_doc], 0
+31: call cl_free
+3:  mov r13, [r12 + NBU_index]
     mov rax, [rbx + NB_cells + VEC_len]
     cmp r13, rax
     cmova r13, rax
@@ -1508,6 +1669,7 @@ FN nb_undo_op
     mov rax, [r12 + NBU_index]
     mov [rbx + NB_sel], rax
 7:  mov dword ptr [rbx + NB_dirty], 1
+  inc qword ptr [rbx + NB_rev]
     mov dword ptr [rbx + NB_reveal], 1
     mov dword ptr [rbx + NB_layoutw], 0
     mov rdi, rbx
@@ -1547,7 +1709,7 @@ rd_line:
     inc rax
     jmp 3b
 4:  cmp r9d, 16
-    jae 6f
+    jae 7f                      # a 17th field: no count a body line has
     mov r11, r9
     shl r11, 4
     mov [r10 + r11], rax
@@ -1564,6 +1726,9 @@ rd_line:
     inc r9d
     mov rax, rdx
     jmp 3b
+7:  mov [rip + rd_n], r9       # the 16 it holds can be read; the count says 17
+    mov eax, 17
+    ret
 6:  mov [rip + rd_n], r9
     mov eax, r9d
     ret
@@ -1988,6 +2153,8 @@ FN ou_ready
     mov rdi, [rbx + NBO_img]
     call mem_free
     mov qword ptr [rbx + NBO_img], 0
+    mov rdi, rbx
+    call ou_shown_free
     xor r12d, r12d
 1:  cmp r12, [rbx + NBO_items + VEC_len]
     jae 9f
@@ -1995,11 +2162,48 @@ FN ou_ready
     add r13, [rbx + NBO_items + VEC_ptr]
     inc r12
     mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_RICH          # a rich document or a picture: shown when it can be read (A4)
+    je 2f
+    cmp eax, NBIT_PICTURE
+    je 3f
     cmp eax, NBIT_TEXT
     jb 1b
     cmp eax, NBIT_GIF
     ja 1b
-    lea rax, [r12 - 1]
+    jmp 4f
+2:  mov rsi, [r13 + NBI_data + SB_ptr]
+    mov rdx, [r13 + NBI_data + SB_len]
+    # a patch body's count line ("1" LF, views design 3.6) comes before the records: passed over
+    xor ecx, ecx
+21: cmp rcx, rdx
+    jae 23f
+    movzx eax, byte ptr [rsi + rcx]
+    cmp eax, 10
+    je 22f
+    sub eax, '0'
+    cmp eax, 9
+    ja 23f
+    inc rcx
+    jmp 21b
+22: test rcx, rcx
+    jz 23f
+    lea rsi, [rsi + rcx + 1]
+    sub rdx, rcx
+    dec rdx
+23: xor edi, edi                # img: handles: none drawn yet (markdown.s)
+    call md_from_body
+    test rax, rax
+    jz 1b
+    mov [rbx + NBO_md], rax
+    jmp 4f
+3:  xor edi, edi                # its extension is set where it is drawn (nb_pic_draw)
+    mov rsi, [r13 + NBI_data + SB_ptr]
+    mov rdx, [r13 + NBI_data + SB_len]
+    call pic_new
+    test rax, rax
+    jz 1b
+    mov [rbx + NBO_pic], rax
+4:  lea rax, [r12 - 1]
     mov [rbx + NBO_show], rax
     mov eax, [r13 + NBI_type]
     cmp eax, NBIT_ANSI
@@ -2251,7 +2455,7 @@ nit_names: .quad .Li_text, .Li_ansi, .Li_png, .Li_jpeg, .Li_gif, .Li_rich, .Li_p
 .Ldash: .asciz "-"
 .Lempty: .asciz ""
 .Lmarkdown: .asciz "Markdown"
-.Lcell_name: .asciz "cell"
+.Lnb_cell_file: .asciz "cell"
 .Lstopped: .asciz "The notebook's extension stopped"
 .Lnot_running: .asciz " is not running: restart it on the Extensions page"
 .Lno_answer: .asciz " did not answer"
@@ -2261,3 +2465,213 @@ nit_names: .quad .Li_text, .Li_ansi, .Li_png, .Li_jpeg, .Li_gif, .Li_rich, .Li_p
 .Lwrite_failed: .asciz "Could not write the notebook"
 .Lbody_bad: .asciz "The extension's notebook cannot be read"
 .Lbody_large: .asciz "The notebook is too big"
+
+.text
+# ---------------- cells as documents for language providers (A3) ----------------
+
+# nb_ext_doc_at(ext, i) -> DOC* of the i-th cell of the open notebooks, for an extension that agreed
+#   notebooks (extproto_events walks them after the tabs); 0 past the last, and always for one that
+#   did not. Walking i = 0, 1, 2... costs one step each.
+FN nb_ext_doc_at
+    FEAT_TEST rdi, FEAT_NOTEBOOKS
+    jz 8f
+    test rsi, rsi
+    jz 1f
+    cmp rdi, [rip + nbx_ext]
+    jne 1f
+    lea rax, [rsi - 1]
+    cmp rax, [rip + nbx_i]
+    jne 1f
+    mov rcx, [rip + nbx_nb]
+    mov rdx, [rip + nbx_c]
+    inc rdx
+    call nbx_norm
+    jmp 5f
+1:  mov [rip + nbx_ext], rdi
+    xor ecx, ecx
+    xor edx, edx
+    mov r8, rsi
+2:  call nbx_norm
+    test rax, rax
+    jz 9f
+    test r8, r8
+    jz 5f
+    inc rdx
+    dec r8
+    jmp 2b
+5:  mov [rip + nbx_i], rsi
+    mov [rip + nbx_nb], rcx
+    mov [rip + nbx_c], rdx
+    ret
+8:  xor eax, eax
+9:  mov qword ptr [rip + nbx_ext], 0
+    ret
+
+# nbx_norm(rcx notebook, rdx cell) -> rax the DOC* of that cell, or of the next one there is (rcx and
+#   rdx move to it), or 0; only notebooks that are open count
+nbx_norm:
+1:  cmp rcx, [rip + g_nbs + VEC_len]
+    jae 8f
+    mov rax, [rip + g_nbs + VEC_ptr]
+    mov rax, [rax + rcx*8]
+    cmp dword ptr [rax + NB_state], NBS_READY
+    jne 2f
+    cmp rdx, [rax + NB_cells + VEC_len]
+    jae 2f
+    mov rax, [rax + NB_cells + VEC_ptr]
+    mov rax, [rax + rdx*8]
+    mov rax, [rax + NBC_doc]
+    ret
+2:  inc rcx
+    xor edx, edx
+    jmp 1b
+8:  xor eax, eax
+    ret
+
+# nb_cell_doc_by_id(id) -> DOC* of the cell with that document id, or 0
+FN nb_cell_doc_by_id
+    xor ecx, ecx
+    xor edx, edx
+1:  call nbx_norm
+    test rax, rax
+    jz 9f
+    cmp [rax + DOC_id], rdi
+    je 9f
+    inc rdx
+    jmp 1b
+9:  ret
+
+# nb_active_cell_id() -> the DOC id of the selected cell while a notebook tab is active, or 0
+FN nb_active_cell_id
+    sub rsp, 8
+    call nb_active
+    test rax, rax
+    jz 9f
+    mov rcx, [rax + NB_sel]
+    cmp rcx, [rax + NB_cells + VEC_len]
+    jae 8f
+    mov rax, [rax + NB_cells + VEC_ptr]
+    mov rax, [rax + rcx*8]
+    mov rax, [rax + NBC_doc]
+    mov rax, [rax + DOC_id]
+    jmp 9f
+8:  xor eax, eax
+9:  add rsp, 8
+    ret
+
+# nb_cell_match(patterns, doc) -> eax 1 when a cell's language's usual file name matches the
+#   patterns: a Python cell is "cell.py" to a provider of *.py (the grammar's first "*." pattern)
+FN nb_cell_match
+    PROLOGUE 16
+    mov rbx, rdi
+    mov rdi, rsi
+    call doc_language
+    test rax, rax
+    jz 8f
+    mov r12, [rax + GR_files]
+    test r12, r12
+    jz 8f
+    mov rdi, r12
+    call strlen
+    mov r13, rax
+1:  test r13, r13
+    jz 8f
+    mov rdi, r12
+    mov rsi, r13
+    call next_word
+    add r12, rcx
+    sub r13, rcx
+    cmp rdx, 2
+    jbe 1b
+    cmp word ptr [rax], 0x2e2a      # "*."
+    jne 1b
+    lea r14, [rax + 1]
+    lea r15, [rdx - 1]
+    lea rdi, [rip + tmp]
+    call sb_clear
+    lea rdi, [rip + tmp]
+    lea rsi, [rip + .Lnb_cell_file]
+    call sb_push_cstr
+    lea rdi, [rip + tmp]
+    mov rsi, r14
+    mov rdx, r15
+    call sb_push
+    lea rdi, [rip + tmp]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, [rip + tmp + SB_ptr]
+    mov rsi, rbx
+    call ext_path_matches
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# nb_sent_hash(nb, ext, hash) -> eax 1 when the extension heard this order already; else it is
+#   remembered as heard
+FN nb_sent_hash
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    xor ecx, ecx
+1:  cmp rcx, [rbx + NB_sent + VEC_len]
+    jae 3f
+    imul rax, rcx, NBS2_SIZE
+    add rax, [rbx + NB_sent + VEC_ptr]
+    inc rcx
+    cmp [rax + NBS2_ext], r12
+    jne 1b
+    cmp [rax + NBS2_hash], r13
+    je 8f
+    mov [rax + NBS2_hash], r13
+    xor eax, eax
+    EPILOGUE
+3:  lea rdi, [rbx + NB_sent]
+    mov esi, NBS2_SIZE
+    call vec_push
+    mov [rax + NBS2_ext], r12
+    mov [rax + NBS2_hash], r13
+    xor eax, eax
+    EPILOGUE
+8:  mov eax, 1
+    EPILOGUE
+
+# nb_sent_forget(ext): what the extension heard of every notebook goes (it stopped)
+FN nb_sent_forget
+    xor ecx, ecx
+1:  cmp rcx, [rip + g_nbs + VEC_len]
+    jae 9f
+    mov rax, [rip + g_nbs + VEC_ptr]
+    mov rax, [rax + rcx*8]
+    inc rcx
+    xor edx, edx
+2:  cmp rdx, [rax + NB_sent + VEC_len]
+    jae 1b
+    imul r8, rdx, NBS2_SIZE
+    add r8, [rax + NB_sent + VEC_ptr]
+    inc rdx
+    cmp [r8 + NBS2_ext], rdi
+    jne 2b
+    mov qword ptr [r8 + NBS2_ext], 0
+    jmp 2b
+9:  ret
+
+
+.text
+# nb_focus_cell() -> the selected cell's DOC* while the active notebook is in edit mode (language
+#   features work in it as in a tab), else 0
+FN nb_focus_cell
+    sub rsp, 8
+    call nb_active
+    test rax, rax
+    jz 9f
+    cmp dword ptr [rax + NB_editing], 0
+    je 8f
+    mov rax, [rip + g_doc]
+    test rax, rax
+    jz 9f
+    test dword ptr [rax + DOC_flags], DF_CELL
+    jnz 9f
+8:  xor eax, eax
+9:  add rsp, 8
+    ret

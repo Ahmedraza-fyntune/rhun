@@ -799,11 +799,16 @@ render_glyph:
     xor edx, edx
 1:  movss xmm0, [r8 + rdx*4]
     mulss xmm0, xmm8
-    movss [r8 + rdx*4], xmm0
-    minss xmm4, xmm0
-    maxss xmm5, xmm0
     movss xmm1, [r9 + rdx*4]
     mulss xmm1, xmm8
+    cmp dword ptr [rbx + FACE_oblique], 0   # an oblique face: x moves right by 0.2 of y
+    je 11f
+    movss xmm2, xmm1
+    mulss xmm2, [rip + f_oblique]
+    addss xmm0, xmm2
+11: movss [r8 + rdx*4], xmm0
+    minss xmm4, xmm0
+    maxss xmm5, xmm0
     movss [r9 + rdx*4], xmm1
     minss xmm6, xmm1
     maxss xmm7, xmm1
@@ -1230,5 +1235,6 @@ xform_identity: .float 1.0, 0.0, 0.0, 1.0, 0.0, 0.0
 f_inv16384: .float 0.00006103515625
 f_big: .float 1.0e9
 f_nbig: .float -1.0e9
+f_oblique: .float 0.2           # an oblique face's shear
 .globl ellipsis
 ellipsis: .ascii "\342\200\246"

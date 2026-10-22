@@ -7,7 +7,7 @@
 .bss
 .p2align 3
 .globl wb_starts, wb_rows
-wb_starts: .zero 4 * (MAXROWS + 1)     # byte offset of each row in the line, last = length
+wb_starts: .zero 4 * (MAXROWS + 66)    # byte offset of each row in the line, last = length (and up to 64 rows before it: lens.s)
 wb_rows: .long 0
 
 .text
@@ -115,38 +115,43 @@ FN break_text
 
 # line_breaks(doc, line) -> rows (wb_starts filled)
 # (a line a fold hides has no rows; without word wrap a line is one row: the view scrolls by rows
-# because of folds, fold.s)
+# because of folds, fold.s; a line with code lenses has a lens row first, lens.s, g_wb_lens)
 FN line_breaks
     push rbx
     push rdi
     push rsi
+    mov dword ptr [rip + g_wb_lens], 0
     call fold_hidden
     test eax, eax
     jnz 8f
     mov rdi, [rsp + 8]
     mov rsi, [rsp]
     call vt_bt_set              # its inlays count (vtext.s)
-    pop rsi
-    pop rdi
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp]
     call doc_line_text
     cmp dword ptr [rip + cfg_word_wrap], 0
     je 7f
-    mov rdi, rax
-    mov rsi, rdx
-    push rdi
+    mov rbx, rax
+    push rdx
+    push rdx
     call wrap_cols
     mov edx, eax
-    pop rdi
+    pop rsi
+    pop rsi
+    mov rdi, rbx
     call break_text
-    pop rbx
-    ret
+    jmp 6f
 7:  lea rax, [rip + wb_starts]
     mov dword ptr [rax], 0
     mov [rax + 4], edx
     mov dword ptr [rip + wb_rows], 1
     mov eax, 1
+6:  pop rsi
+    pop rdi
     pop rbx
-    ret
+    mov edx, eax
+    jmp lens_row_add            # a code lens row first (lens.s)
 8:  pop rsi
     pop rdi
     lea rax, [rip + wb_starts]
@@ -640,6 +645,15 @@ FN wrap_pos_at
     xor edx, edx
     div dword ptr [rip + g_lh]
     mov r15d, eax               # row
+    xor ecx, ecx                # a row put before the text (ghost text's, a code lens's: lens.s)?
+    mov eax, [rip + g_wb_lens]
+    cmp r15d, eax
+    jae 22f
+    dec eax
+    cmp r15d, eax               # the last of them: the lens row, when there is one
+    jne 22f
+    mov ecx, 1
+22: mov [rsp + 4], ecx
     mov eax, [rsp]
     sub eax, [rip + g_ed_tx]
     cmp dword ptr [rip + cfg_word_wrap], 0
@@ -657,7 +671,15 @@ FN wrap_pos_at
     mov edx, r15d
     mov ecx, eax
     call pos_in_row
-    EPILOGUE
+    cmp dword ptr [rsp + 4], 0
+    je 4f
+    mov [rsp + 8], rax
+    mov rdi, rbx                # the lens item under the pointer becomes the hit (lens.s)
+    mov rsi, r12
+    mov edx, [rsp]
+    call lens_hit
+    mov rax, [rsp + 8]
+4:  EPILOGUE
 .Lwp_end:
     mov rdi, rbx
     call doc_len
@@ -689,11 +711,11 @@ FN wrap_move
     mov rdi, rbx
     mov rsi, r12
     call line_breaks
-    xor edx, edx
+    mov edx, [rip + g_wb_lens]  # its first text row: past a code lens row (lens.s)
     jmp .Lwm_go
 .Lwm_up:
-    test r13d, r13d
-    jz 2f
+    cmp r13d, [rip + g_wb_lens]
+    jbe 2f
     lea edx, [r13 - 1]
     jmp .Lwm_go
 2:  test r12, r12

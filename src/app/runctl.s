@@ -22,6 +22,7 @@
 #   run-approve OWNER/NAME COMMAND ask as an extension's first program in the project would; prints
 #                                  "approve=allowed|asked|busy|noext"; print-approve: the answer since
 #   print-approve                  "approve=none|yes|no"
+#   print-task-nodes               "nodes=N": the run nodes in use (none when nothing runs or waits)
 #   task-prelaunch NAME            run a task as the debugger's prelaunch does (tasks_run_named):
 #                                  "prelaunch=started|notfound"; print-prelaunch: "prelaunch=none|
 #                                  waiting|done|failed"
@@ -60,6 +61,7 @@ TCTL t_print_uproc, c_print_uproc
 TCTL t_print_task_status, c_print_task_status
 TCTL t_task_prelaunch, c_task_prelaunch
 TCTL t_print_prelaunch, c_print_prelaunch
+TCTL t_print_task_nodes, c_print_task_nodes
 TCTL t_print_allowed, c_print_allowed
 TCTL t_run_approve, c_run_approve
 TCTL t_print_approve, c_print_approve
@@ -630,6 +632,13 @@ prelaunch_done:
 1:  mov [rip + prelaunch_last], eax
     ret
 
+c_print_task_nodes:
+    sub rsp, 8
+    mov rdi, r15
+    call tasks_nodes_dump
+    add rsp, 8
+    ret
+
 c_print_prelaunch:
     sub rsp, 8
     mov eax, [rip + prelaunch_last]
@@ -670,6 +679,7 @@ c_print_approve:
 .Lc_print_task_status: .asciz "print-task-status"
 .Lc_task_prelaunch: .asciz "task-prelaunch"
 .Lc_print_prelaunch: .asciz "print-prelaunch"
+.Lc_print_task_nodes: .asciz "print-task-nodes"
 .Ls_pre_started: .asciz "prelaunch=started\n"
 .Ls_pre_notfound: .asciz "prelaunch=notfound\n"
 .Ls_pre_none: .asciz "prelaunch=none\n"
@@ -735,7 +745,8 @@ tasks_ctl:
     .quad .Lc_print_pattern, t_print_pattern, .Lc_print_problems, t_print_problems
     .quad .Lc_print_problems_tab, t_print_problems_tab, .Lc_print_tasks, t_print_tasks
     .quad .Lc_print_records, t_print_records, .Lc_print_task_status, t_print_task_status
-    .quad .Lc_task_prelaunch, t_task_prelaunch, .Lc_print_prelaunch, t_print_prelaunch, 0, 0
+    .quad .Lc_task_prelaunch, t_task_prelaunch, .Lc_print_prelaunch, t_print_prelaunch
+    .quad .Lc_print_task_nodes, t_print_task_nodes, 0, 0
 prelaunch_words: .quad .Ls_pre_none, .Ls_pre_waiting, .Ls_pre_done, .Ls_pre_failed
 options:
     .quad .Lo_cwd, o_cwd, .Lo_env, o_env, .Lo_unset, o_unset, .Lo_title, o_title

@@ -17,7 +17,10 @@
 .equ PM_KEYS, 12                # Keyboard Shortcuts: every binding (keys.s keys_list)
 .equ PM_REMOTE, 40              # remote hosts: a pick list that also takes typed text (remoteui.s)
 .equ PM_TASKS, 76               # tasks and terminals: Run Task and the other task commands (tasks.s)
-.equ PM_WSLIST, 16              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSLIST, 88              # wsedit: a workspace edit's question (wsconfirm.s)
+.equ PM_WSYM, 92                # language features: Go to Symbol in Project (wsym.s)
+.equ PM_DPICK, 80               # debugger: a launch's ${pick:} or ${process} (debugask.s)
+.equ PM_ICONS, 64               # contributions: Select File Icon Theme (iconth.s)
 
 .equ ID_PAL_ROW, 0x200000         # + row: a range of its own, as results run to MAXFILES
 .equ ID_PAL_FIELD, 0x3fff
@@ -55,6 +58,7 @@ ENDSTRUCT RS_SIZE
 
 .bss
 .p2align 3
+gtr_query: .zero 104            # language features: Find in Files' query for the Results title
 pal_mode: .long 0
 pal_prompt: .long 0             # PROMPT_* when in PM_PROMPT
 pal_sel: .long 0
@@ -127,6 +131,8 @@ FN palette_close_extensions_pure
     je .Lpal_detach_borrowers_pure
     cmp eax, PM_THEMES
     je .Lpal_detach_borrowers_pure
+    cmp eax, PM_ICONS
+    je .Lpal_detach_icons_pure
     cmp eax, PM_LANGS
     je .Lpal_detach_borrowers_pure
     cmp eax, PM_PROVIDERS
@@ -147,6 +153,11 @@ FN palette_close_extensions_pure
     cmp eax, PROMPT_RENAME_SYMBOL
     je .Lpal_detach_borrowers_pure
 9:  ret
+.Lpal_detach_icons_pure:
+    push rax
+    mov rdi, -1
+    call iconth_preview         # the setting's icons again
+    pop rax
 .Lpal_detach_borrowers_pure:
     push rax
     call extpage_prompt_invalidate_pure
@@ -166,6 +177,11 @@ FN palette_close_extensions_pure
     je pal_return_focus
     ret
 
+# FN palette_icon_themes(): Select File Icon Theme, previewing the row under the selection
+FN palette_icon_themes
+    mov edi, PM_ICONS
+    jmp palette_open
+
 # palette_open(mode)
 palette_open:
     PROLOGUE
@@ -182,6 +198,10 @@ palette_open:
     cmp ebx, PM_THEMES
     je 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS    # the file icons the setting chooses again
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov [rip + pal_mode], ebx
     mov dword ptr [rip + pal_sel], 0
@@ -213,9 +233,15 @@ palette_open:
     call load_langs
     jmp 8f
 4:  cmp ebx, PM_KEYS
-    jne 8f
+    jne 5f
     lea rdi, [rip + item_add]
     call keys_list
+    jmp 8f
+5:  cmp ebx, PM_ICONS
+    jne 8f
+    lea rdi, [rip + item_add]
+    call iconth_list
+    mov [rip + pal_sel], eax    # the setting's row
 8:  call palette_filter
     # the theme list shows its setting's theme, which need not be the one shown (the light mode's
     # theme from Settings while the system is dark)
@@ -237,6 +263,10 @@ FN palette_close
     cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call theme_apply_config
+1:  cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 1f
+    mov rdi, -1
+    call iconth_preview
 1:  call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -261,7 +291,9 @@ pal_remote_cancel:
     cmp dword ptr [rip + pal_mode], PM_PROMPT
     jne 2f
     cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 2f
+    je 1f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 2f
 1:  mov dword ptr [rip + pal_mode], PM_NONE
     jmp remote_ui_cancel
 2:  ret
@@ -454,9 +486,8 @@ FN palette_tick
     inc qword ptr [rip + gload_i]
     imul r12, rbx, IT_SIZE
     add r12, [rip + gload + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r13, rax
     mov rdi, rax
     call grep_read
@@ -1337,6 +1368,29 @@ FN palette_choose_add
 FN palette_choose_ready
     jmp palette_filter
 
+# custom editors: palette_reopen_open(label cstr): an empty pick list for Reopen With; rows follow
+# with palette_choose_add, then palette_choose_ready; choosing row n calls ce_reopen_chosen(n)
+FN palette_reopen_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_REOPEN
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
+# debugger: palette_dpick_open(label cstr): an empty pick list for a launch's ${pick:} or ${process}
+# (debugask.s), a configuration or a template; rows follow with palette_choose_add, then
+# palette_choose_ready; choosing row n calls dview_dpick_chosen(n)
+FN palette_dpick_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_DPICK
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+
 # wsedit: palette_wslist_open(label cstr): an empty pick list for a workspace edit's question
 # (wsconfirm.s); rows follow with palette_choose_add, then palette_choose_ready; choosing row n
 # calls wslist_chosen(n), closing it otherwise wslist_abort
@@ -1372,6 +1426,75 @@ FN palette_providers_open
 
 FN palette_results_add
     jmp item_add
+
+# language features: a results list refreshed as a query's parts come keeps what the user did:
+# palette_results_refresh() empties it but keeps the field (then _add and _ready as before),
+# palette_results_selected() -> rax the selected item's n, or -1, palette_results_select(n): the
+# row of item n is selected (after _ready)
+# language features: the symbol mode (wsym.s): palette_wsym_open(label cstr), _showing() -> eax 1
+# while it is open, _clear() (its items go, the query stays), _add(ptr, len, detail cstr, n),
+# _ready(); choosing item n calls wsym_chosen(n). The strings stay wsym.s's until the next _clear
+FN palette_wsym_open
+    push rbx
+    mov rbx, rdi
+    mov edi, PM_WSYM
+    call palette_open
+    mov [rip + pal_label], rbx
+    pop rbx
+    ret
+FN palette_wsym_showing
+    xor eax, eax
+    cmp dword ptr [rip + pal_mode], PM_WSYM
+    sete al
+    ret
+FN palette_wsym_clear
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_wsym_add
+    jmp item_add
+FN palette_wsym_ready
+    push rbx
+    mov ebx, [rip + pal_sel]    # the choice stays where it was as answers come
+    call palette_filter
+    mov eax, [rip + results + VEC_len]
+    cmp ebx, eax
+    jae 1f
+    mov [rip + pal_sel], ebx
+1:  pop rbx
+    ret
+
+FN palette_results_refresh
+    mov qword ptr [rip + items + VEC_len], 0
+    mov qword ptr [rip + results + VEC_len], 0
+    ret
+FN palette_results_selected
+    push rbx
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rax, [rax + IT_data]
+    pop rbx
+    ret
+1:  mov rax, -1
+    pop rbx
+    ret
+FN palette_results_select
+    xor ecx, ecx
+1:  cmp rcx, [rip + results + VEC_len]
+    jae 9f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rcx*8 + RS_item]
+    imul rax, rax, IT_SIZE
+    add rax, [rip + items + VEC_ptr]
+    cmp [rax + IT_data], rdi
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov [rip + pal_sel], ecx
+    mov dword ptr [rip + pal_reveal], 1
+    mov dword ptr [rip + g_dirty], 1
+9:  ret
 
 FN palette_results_ready
     jmp palette_filter
@@ -1708,8 +1831,12 @@ load_files:
     jz 9f
     cmp dword ptr [rip + g_remote], 0
     jne .Llf_remote
+    call wfold_count
+    cmp eax, 2
+    jae .Llf_folders
     mov dword ptr [rip + scan_plen], 0
     mov dword ptr [rip + scan_depth], 0
+    mov rdi, [rip + g_project]
     call scan_dir
 .Llf_fix:
     # labels point into strings (stable after the scan): offsets -> pointers
@@ -1724,6 +1851,29 @@ load_files:
     jmp 1b
 9:  EPILOGUE
 
+.Llf_folders:
+    # workspace folders: each one's files, their labels starting with its name (workspace.s)
+    xor ebx, ebx
+1:  call wfold_count
+    cmp rbx, rax
+    jae .Llf_fix
+    mov rdi, rbx
+    call wfold_name
+    lea rdi, [rip + scan_prefix]
+    mov rsi, rax
+    call cstr_copy
+    mov byte ptr [rax], '/'
+    lea rcx, [rip + scan_prefix]
+    sub rax, rcx
+    inc eax
+    mov [rip + scan_plen], eax
+    mov dword ptr [rip + scan_depth], 0
+    mov rdi, rbx
+    call wfold_path
+    mov rdi, rax
+    call scan_dir
+    inc rbx
+    jmp 1b
 .Llf_remote:
     # remote hosts: the host walks the project in one request (vfs.s)
     mov esi, MAXFILES
@@ -1829,7 +1979,9 @@ scan_cb:
 
 # ---- path browser ----
 
-# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder
+# browse_open(folder): Open File (0) or Open Folder (1), starting in the project folder; 2 is Add
+#   Folder to Workspace (workspace.s), which adds the folder picked instead of opening it
+FN browse_open_kind
 browse_open:
     PROLOGUE
     mov ebx, edi
@@ -1841,6 +1993,9 @@ browse_open:
     test ebx, ebx
     jz 1f
     lea rax, [rip + .Lph_open_folder]
+    cmp ebx, 2
+    jne 1f
+    lea rax, [rip + .Lph_add_folder]
 1:  mov [rip + pal_label], rax
     # the field: the project folder, the home folder as ~, and a '/'
     mov rsi, [rip + g_project]
@@ -2060,7 +2215,10 @@ browse_load:
     je 1f
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
-    call sb_push_cstr
+    cmp dword ptr [rip + brw_kind], 2
+    jne 88f
+    lea rsi, [rip + .Ladd_here]
+88: call sb_push_cstr
     lea rdi, [rip + brw_label]
     lea rsi, [rip + brw_dir]
     call path_tilde
@@ -2076,6 +2234,9 @@ browse_load:
     xor edx, edx
     mov ecx, BRW_HERE
     call item_add
+    mov ebx, 1
+    cmp dword ptr [rip + brw_kind], 2  # adding: no new window
+    je 1f
     lea r13, [r12 + 1]
     lea rdi, [rip + strings]
     lea rsi, [rip + .Lopen_here]
@@ -2300,7 +2461,13 @@ FN palette_print
     je 13f
     cmp dword ptr [rip + pal_mode], PM_WSLIST
     je 13f
+    cmp dword ptr [rip + pal_mode], PM_REOPEN   # custom editors
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_DPICK      # debugger
+    je 13f
     cmp dword ptr [rip + pal_mode], PM_PROVIDERS
+    je 13f
+    cmp dword ptr [rip + pal_mode], PM_WSYM
     je 13f
     cmp dword ptr [rip + pal_mode], PM_RESULTS
     jne 11f
@@ -2598,7 +2765,7 @@ FN palette_changed
     pop rbx
     ret
 3:  cmp byte ptr [rax], ':'
-    jne 2f
+    jne 4f
     cmp qword ptr [rip + g_doc], 0
     je 2f
     mov dword ptr [rip + pal_mode], PM_GOTO
@@ -2607,7 +2774,22 @@ FN palette_changed
     mov rdx, [rip + pal_tf + TF_sb + SB_len]
     dec rdx
     call tf_set
-2:  jmp palette_filter
+    jmp 2f
+4:  cmp byte ptr [rax], '#'     # language features: '#' switches files -> symbols in the project
+    jne 2f
+    push rbx
+    call cmd_workspace_symbols
+    pop rbx
+2:  cmp dword ptr [rip + pal_mode], PM_WSYM
+    jne 5f
+    push rbx
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov rdi, rax
+    mov rsi, rdx
+    call wsym_changed
+    pop rbx
+5:  jmp palette_filter
 
 # selected item -> IT* or 0
 selected_item:
@@ -2624,7 +2806,14 @@ selected_item:
 
 # preview selection (themes)
 preview:
-    cmp dword ptr [rip + pal_mode], PM_THEMES
+    cmp dword ptr [rip + pal_mode], PM_ICONS
+    jne 0f
+    call selected_item
+    test rax, rax
+    jz 1f
+    mov rdi, [rax + IT_data]
+    jmp iconth_preview
+0:  cmp dword ptr [rip + pal_mode], PM_THEMES
     jne 1f
     call selected_item
     test rax, rax
@@ -2646,7 +2835,15 @@ FN palette_key
     jne 1f
     call palette_close
     jmp .Lpk_yes
-1:  # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
+1:  cmp r12d, KEY_RETURN        # language features: ctrl+Enter in Find in Files moves its results
+    jne 10f                     # to the Results panel (results.s)
+    test r14d, MOD_CTRL
+    jz 10f
+    cmp dword ptr [rip + pal_mode], PM_GREP
+    jne 10f
+    call grep_to_results
+    jmp .Lpk_yes
+10: # remote hosts: moving in Find in Files' results waits for the host's answer they belong to
     cmp dword ptr [rip + pal_mode], PM_GREP
     jne 11f
     cmp dword ptr [rip + g_remote], 0
@@ -2749,6 +2946,75 @@ FN palette_key
     mov eax, 1
     EPILOGUE
 
+# grep_to_results(): Find in Files' results (as filtered now) become a Results set, the palette
+# closes (language features, results.s)
+grep_to_results:
+    PROLOGUE 48
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov r15, rdx                # the query's length: each match's
+    cmp rdx, 100
+    jbe 1f
+    mov edx, 100
+1:  mov [rsp + 8], rdx
+    lea rdi, [rip + gtr_query]
+    mov rsi, rax
+    call memcpy
+    lea rax, [rip + gtr_query]
+    mov rcx, [rsp + 8]
+    mov byte ptr [rax + rcx], 0
+    lea rdi, [rip + gtr_query]
+    call results_find_begin
+    mov [rsp], rax
+    xor ebx, ebx
+3:  cmp rbx, [rip + results + VEC_len]
+    jae 8f
+    mov rax, [rip + results + VEC_ptr]
+    mov eax, [rax + rbx*8 + RS_item]
+    imul r12, rax, IT_SIZE
+    add r12, [rip + items + VEC_ptr]
+    inc rbx
+    mov r13, [r12 + IT_data]
+    mov rax, r13
+    shr rax, 44
+    cmp rax, [rip + gfiles + VEC_len]
+    jae 3b
+    imul rax, rax, GF_SIZE
+    add rax, [rip + gfiles + VEC_ptr]
+    mov rdi, [rip + g_project]
+    mov rsi, [rax + GF_label]
+    call path_join
+    mov r14, rax
+    mov rax, r13                # the range: LINE COL to COL + the query's length
+    shr rax, 20
+    and eax, 0xffffff
+    inc eax
+    mov [rsp + 16], eax
+    mov [rsp + 24], eax
+    mov eax, r13d
+    and eax, 0xfffff
+    inc eax
+    mov [rsp + 20], eax
+    add eax, r15d
+    mov [rsp + 28], eax
+    mov rdi, [rsp]
+    mov rsi, r14
+    lea rdx, [rsp + 16]
+    mov rcx, [r12 + IT_label]
+    mov r8, [r12 + IT_len]
+    call results_loc
+    mov rdi, r14
+    call mem_free
+    jmp 3b
+8:  call grep_release
+    mov dword ptr [rip + pal_mode], PM_NONE
+    mov dword ptr [rip + g_focus], FOCUS_EDITOR
+    mov rdi, [rsp]
+    xor esi, esi
+    call results_refs_end
+    mov dword ptr [rip + g_dirty], 1
+    EPILOGUE
+
 # palette_accept(): act on the selection / input
 palette_accept:
     PROLOGUE 16
@@ -2775,9 +3041,8 @@ palette_accept:
     je .Lpa_grep
     cmp ebx, PM_FILES
     jne 1f
-    mov rdi, [rip + g_project]
-    mov rsi, [r12 + IT_label]
-    call path_join
+    mov rdi, [r12 + IT_label]   # with two folders or more a label starts with its folder's name
+    call wfold_join
     mov r13, rax
     mov dword ptr [rip + pal_mode], PM_NONE
     mov dword ptr [rip + g_focus], FOCUS_EDITOR
@@ -2796,7 +3061,12 @@ palette_accept:
     mov rdi, rax
     call [rax + CMD_fn]
     jmp .Lpa_ret
-2:  cmp ebx, PM_THEMES
+2:  cmp ebx, PM_ICONS
+    jne 21f
+    mov rdi, [r12 + IT_data]
+    call iconth_choose
+    jmp .Lpa_close
+21: cmp ebx, PM_THEMES
     jne 3f
     # saved in the list's setting; closing shows the theme the settings now choose
     mov rdi, [rip + pal_theme_slot]
@@ -2837,14 +3107,30 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 33: cmp ebx, PM_TASKS
-    jne 331f
+    jne 332f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
     mov rdi, [r12 + IT_data]
     call tasks_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-331: cmp ebx, PM_WSLIST          # wsedit
+332: cmp ebx, PM_REOPEN          # custom editors: Reopen With (customed.s)
+    jne 331f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call ce_reopen_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+331: cmp ebx, PM_WSYM            # language features: a symbol in the project
+    jne 335f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call wsym_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+335: cmp ebx, PM_WSLIST          # wsedit
     jne 34f
     mov dword ptr [rip + pal_mode], PM_NONE
     call pal_return_focus
@@ -2852,7 +3138,15 @@ palette_accept:
     call wslist_chosen
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
-34: cmp ebx, PM_CHOOSE
+34: cmp ebx, PM_DPICK            # debugger: a launch variable's answer (debugask.s)
+    jne 35f
+    mov dword ptr [rip + pal_mode], PM_NONE
+    call pal_return_focus
+    mov rdi, [r12 + IT_data]
+    call dview_dpick_chosen
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+35: cmp ebx, PM_CHOOSE
     jne .Lpa_close
     # the extension's pick: the item's number, with the palette closed first (the reply may
     # open another prompt)
@@ -2920,7 +3214,20 @@ palette_accept:
     mov dword ptr [rip + g_reveal], 0
     jmp .Lpa_close
 .Lpa_prompt:
-    # extension management: the folder or archive to install
+    cmp dword ptr [rip + pal_prompt], PROMPT_WS_SAVE  # resources group: Save Workspace As
+    jne 66f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call workspace_save_as
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
+66: # extension management: the folder or archive to install
     mov ecx, [rip + pal_prompt]
     cmp ecx, PROMPT_EXT_FOLDER
     jb 67f
@@ -2982,7 +3289,7 @@ palette_accept:
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
 691: cmp dword ptr [rip + pal_prompt], PROMPT_DEBUG    # debugger (debugview.s)
-    jne 690f
+    jne 693f
     lea rdi, [rip + pal_tf]
     call tf_text
     mov dword ptr [rip + pal_mode], PM_NONE
@@ -2994,9 +3301,24 @@ palette_accept:
     call dview_prompt_done
     mov dword ptr [rip + g_dirty], 1
     jmp .Lpa_ret
+693: cmp dword ptr [rip + pal_prompt], PROMPT_COLOR    # editor presentation: a swatch's color (hicolor.s)
+    jne 690f
+    lea rdi, [rip + pal_tf]
+    call tf_text
+    mov dword ptr [rip + pal_mode], PM_NONE
+    push rax
+    push rdx
+    call pal_return_focus
+    pop rsi
+    pop rdi
+    call color_prompt_done
+    mov dword ptr [rip + g_dirty], 1
+    jmp .Lpa_ret
 690: cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE
-    jb 692f
-    # remote hosts: ssh's question answered
+    je 693f
+    cmp dword ptr [rip + pal_prompt], PROMPT_REMOTE_SECRET
+    jne 692f
+693: # remote hosts: ssh's question answered (or the port to forward)
     lea rdi, [rip + pal_tf]
     call tf_text
     mov ebx, [rip + pal_prompt]
@@ -3088,9 +3410,8 @@ palette_accept:
     shr rax, 44
     imul rax, rax, GF_SIZE
     add rax, [rip + gfiles + VEC_ptr]
-    mov rdi, [rip + g_project]
-    mov rsi, [rax + GF_label]
-    call path_join
+    mov rdi, [rax + GF_label]   # workspace folders: wfold_join
+    call wfold_join
     mov r14, rax
     call grep_release
     mov dword ptr [rip + pal_mode], PM_NONE
@@ -3181,7 +3502,11 @@ palette_accept:
 .Lpa_switch:
     call palette_close
     lea rdi, [rip + brw_next]
-    call app_switch_project
+    cmp dword ptr [rip + brw_kind], 2
+    jne 1f
+    call workspace_add_ui       # Add Folder to Workspace (workspace.s)
+    jmp .Lpa_ret
+1:  call app_switch_project
     jmp .Lpa_ret
 .Lpa_new:
     # another rhun opens it; this window keeps its project
@@ -3779,6 +4104,9 @@ placeholder_text:
     lea rcx, [rip + .Lph_keys]
     cmp eax, PM_KEYS
     je 1f
+    lea rcx, [rip + .Lph_icons]
+    cmp eax, PM_ICONS
+    je 1f
     cmp eax, PM_THEMES
     jne 2f
     lea rcx, [rip + .Lph_dark]
@@ -3854,6 +4182,7 @@ hint_text:
 .Lph_files: .asciz "Search files by name  (> commands, : line)"
 .Lph_cmds: .asciz "Type a command"
 .Lph_keys: .asciz "Search keyboard shortcuts"
+.Lph_icons: .asciz "Select a file icon theme"
 .Lph_themes: .asciz "Select a color theme"
 .Lph_dark: .asciz "Select a theme for dark mode"
 .Lph_light: .asciz "Select a theme for light mode"
@@ -3873,6 +4202,8 @@ hint_text:
 .Lph_open_file: .asciz "Open a file"
 .Lph_open_folder: .asciz "Open a folder"
 .Lopen_here: .asciz "Open "
+.Ladd_here: .asciz "Add "
+.Lph_add_folder: .asciz "Add a folder to the workspace"
 .Lopen_new: .asciz " in a new window"
 .Lroot: .asciz "/"
 .Lpp_none: .asciz "none\n"

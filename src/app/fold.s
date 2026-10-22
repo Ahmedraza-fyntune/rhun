@@ -4,13 +4,14 @@
 # follow edits; an edit inside the hidden text, or deleting the header's line feed, removes the
 # fold. Ranges come from indentation: line L starts one when the next non-blank line is indented
 # deeper; it ends at the last line before the next non-blank line indented no deeper than L,
-# trailing blank lines excluded, so a closing brace stays visible.
+# trailing blank lines excluded, so a closing brace stays visible. A language's fold_markers (a
+# START line to its END line, nested, langconf.s) are ranges too.
 #
 # A document with folds scrolls by rows (wrap.s's row machinery, a hidden line has no rows). Its
 # queries, fast for a fold hiding ten million lines (a cache of merged hidden intervals with counts):
 #   fold_hidden(doc, line) -> eax 1           fold_next_visible / fold_prev_visible(doc, line)
 #   fold_hidden_before(doc, line) -> rax      fold_row_line(doc, row) -> rax the line of a row
-#   fold_at(doc, line) -> rax FD* of a fold whose header the line is (the widest), or 0
+#   fold_at(doc, line) -> rax FLD* of a fold whose header the line is (the widest), or 0
 #   rows_mode() -> eax 1 when the active document scrolls by rows (wrapped lines, or folds)
 .include "rhun.inc"
 
@@ -25,6 +26,8 @@ fold_cache:
     jz 9f
     cmp qword ptr [rax + PRS_folds + VEC_len], 0
     je 8f
+    cmp dword ptr [rip + cfg_folding], 0
+    je 8f                       # folding turned off: folds hide nothing
     mov rcx, [rdi + DOC_version]
     cmp [rax + PRS_hidver], rcx
     jne 1f
@@ -36,6 +39,7 @@ fold_cache:
 1:  jmp fold_rebuild
 8:  mov qword ptr [rax + PRS_hidden], 0
     mov qword ptr [rax + PRS_hid + VEC_len], 0
+    mov qword ptr [rax + PRS_hidgen], 0     # built again when folds hide lines again
     xor eax, eax
 9:  ret
 
@@ -54,15 +58,15 @@ fold_rebuild:
     xor r13d, r13d
 1:  cmp r13, [r12 + PRS_folds + VEC_len]
     jae 5f
-    imul r14, r13, FD_SIZE
+    imul r14, r13, FLD_SIZE
     add r14, [r12 + PRS_folds + VEC_ptr]
     inc r13
     mov rdi, rbx
-    mov rsi, [r14 + FD_a]
+    mov rsi, [r14 + FLD_a]
     call doc_line_of
     lea r15, [rax + 1]          # first hidden
     mov rdi, rbx
-    mov rsi, [r14 + FD_b]
+    mov rsi, [r14 + FLD_b]
     call doc_line_of
     cmp rax, r15
     jb 1b                       # (nothing hidden)
@@ -267,6 +271,14 @@ FN rows_mode
     jz 8f
     cmp qword ptr [rcx + PRS_folds + VEC_len], 0
     setne al
+    and eax, [rip + cfg_folding]
+    cmp qword ptr [rip + gh_rows], 0                # or rows of ghost text (ghost.s)
+    jne 7f
+    cmp qword ptr [rcx + PRS_lens + VEC_len], 0     # or code lens rows (lens.s)
+    je 8f
+    cmp dword ptr [rip + cfg_code_lens], 0
+    je 8f
+7:  mov eax, 1
 8:  pop rcx
 9:  ret
 
@@ -428,6 +440,8 @@ FN fold_line_inlays
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
+    cmp dword ptr [rip + cfg_folding], 0
+    je 9f
     call fold_at
     test rax, rax
     jz 9f
@@ -445,7 +459,7 @@ FN fold_line_inlays
     mov dword ptr [r14 + VI_cells], 0
     lea rax, [rip + .Lpill]
     mov ecx, .Lpill_end - .Lpill
-    mov rdx, [r13 + FD_text]
+    mov rdx, [r13 + FLD_text]
     test rdx, rdx
     jz 1f
     mov rax, rdx
@@ -468,7 +482,7 @@ FN fold_line_inlays
 
 # ---------------- folds ----------------
 
-# fold_at(doc, line) -> rax FD* of the widest fold whose header the line is, or 0
+# fold_at(doc, line) -> rax FLD* of the widest fold whose header the line is, or 0
 FN fold_at
     PROLOGUE
     mov rbx, rdi
@@ -486,15 +500,15 @@ FN fold_at
     xor ecx, ecx
 1:  cmp rcx, [r13 + PRS_folds + VEC_len]
     jae 7f
-    imul rax, rcx, FD_SIZE
+    imul rax, rcx, FLD_SIZE
     add rax, [r13 + PRS_folds + VEC_ptr]
     inc rcx
-    cmp [rax + FD_a], r14
+    cmp [rax + FLD_a], r14
     jne 1b
     test r15, r15
     jz 2f
-    mov rdx, [rax + FD_b]
-    cmp rdx, [r15 + FD_b]
+    mov rdx, [rax + FLD_b]
+    cmp rdx, [r15 + FLD_b]
     jbe 1b
 2:  mov r15, rax
     jmp 1b
@@ -541,33 +555,33 @@ fold_add_at:
     xor r14d, r14d
 1:  cmp r14, [r15 + PRS_folds + VEC_len]
     jae 3f
-    imul rax, r14, FD_SIZE
+    imul rax, r14, FLD_SIZE
     add rax, [r15 + PRS_folds + VEC_ptr]
-    cmp [rax + FD_a], r12
+    cmp [rax + FLD_a], r12
     jb 2f
     ja 3f
-    cmp [rax + FD_b], r13
+    cmp [rax + FLD_b], r13
     je 9f                       # already folded
 2:  inc r14
     jmp 1b
 3:  lea rdi, [r15 + PRS_folds]
-    mov esi, FD_SIZE
+    mov esi, FLD_SIZE
     call vec_push
     mov rcx, [r15 + PRS_folds + VEC_len]
     dec rcx
     sub rcx, r14
-    imul rdx, rcx, FD_SIZE
-    imul rsi, r14, FD_SIZE
+    imul rdx, rcx, FLD_SIZE
+    imul rsi, r14, FLD_SIZE
     add rsi, [r15 + PRS_folds + VEC_ptr]
     push rsi
     push rsi
-    lea rdi, [rsi + FD_SIZE]
+    lea rdi, [rsi + FLD_SIZE]
     call memmove
     pop rax
     pop rax
-    mov [rax + FD_a], r12
-    mov [rax + FD_b], r13
-    mov qword ptr [rax + FD_text], 0
+    mov [rax + FLD_a], r12
+    mov [rax + FLD_b], r13
+    mov qword ptr [rax + FLD_text], 0
     mov r14, rax
     mov rdi, r15
     mov rsi, r12
@@ -579,7 +593,7 @@ fold_add_at:
     test rdi, rdi
     jz 4f
     call dup_cstr
-    mov [r14 + FD_text], rax
+    mov [r14 + FLD_text], rax
 4:  mov rdi, rbx
     call pres_touch
 9:  EPILOGUE
@@ -590,18 +604,18 @@ fold_drop:
     mov rbx, rdi
     mov r12, rsi
     mov r13, [rbx + DOC_pres]
-    imul rax, r12, FD_SIZE
+    imul rax, r12, FLD_SIZE
     add rax, [r13 + PRS_folds + VEC_ptr]
     mov r14, rax
-    mov rdi, [r14 + FD_text]
+    mov rdi, [r14 + FLD_text]
     call mem_free
     mov rcx, [r13 + PRS_folds + VEC_len]
     dec rcx
     mov [r13 + PRS_folds + VEC_len], rcx
     sub rcx, r12
-    imul rdx, rcx, FD_SIZE
+    imul rdx, rcx, FLD_SIZE
     mov rdi, r14
-    lea rsi, [r14 + FD_SIZE]
+    lea rsi, [r14 + FLD_SIZE]
     call memmove
     mov rdi, rbx
     call pres_touch
@@ -623,9 +637,9 @@ FN fold_unfold_line
     xor ecx, ecx
 1:  cmp rcx, [r13 + PRS_folds + VEC_len]
     jae 9f
-    imul rax, rcx, FD_SIZE
+    imul rax, rcx, FLD_SIZE
     add rax, [r13 + PRS_folds + VEC_ptr]
-    cmp [rax + FD_a], r14
+    cmp [rax + FLD_a], r14
     je 2f
     inc rcx
     jmp 1b
@@ -653,11 +667,11 @@ FN fold_reveal
     xor r14d, r14d
 1:  cmp r14, [r13 + PRS_folds + VEC_len]
     jae 9f
-    imul rax, r14, FD_SIZE
+    imul rax, r14, FLD_SIZE
     add rax, [r13 + PRS_folds + VEC_ptr]
-    cmp r12, [rax + FD_a]
+    cmp r12, [rax + FLD_a]
     jbe 2f
-    cmp r12, [rax + FD_b]
+    cmp r12, [rax + FLD_b]
     ja 2f
     mov rdi, rbx
     mov rsi, r14
@@ -682,33 +696,33 @@ FN fold_shift
     xor r14d, r14d
 1:  cmp r14, [r13 + PRS_folds + VEC_len]
     jae 9f
-    imul r15, r14, FD_SIZE
+    imul r15, r14, FLD_SIZE
     add r15, [r13 + PRS_folds + VEC_ptr]
     mov rsi, [r12 + TE_pos]
     cmp qword ptr [r12 + TE_ins], 0
     je 3f
     # an insert in (a, b]: inside the hidden lines
-    cmp rsi, [r15 + FD_a]
+    cmp rsi, [r15 + FLD_a]
     jbe 4f
-    cmp rsi, [r15 + FD_b]
+    cmp rsi, [r15 + FLD_b]
     ja 4f
     jmp 6f
 3:  # a deletion [p, p + del) over [a, b]
-    cmp rsi, [r15 + FD_b]
+    cmp rsi, [r15 + FLD_b]
     ja 4f
     mov rax, rsi
     add rax, [r12 + TE_del]
-    cmp rax, [r15 + FD_a]
+    cmp rax, [r15 + FLD_a]
     ja 6f
-4:  mov rdi, [r15 + FD_a]
+4:  mov rdi, [r15 + FLD_a]
     mov rdx, [r12 + TE_del]
     mov rcx, [r12 + TE_ins]
     mov r8d, GR_RIGHT           # an insert at the header's end goes before the fold
     call tape_shift
-    mov [r15 + FD_a], rax
-    mov rdi, [r15 + FD_b]
+    mov [r15 + FLD_a], rax
+    mov rdi, [r15 + FLD_b]
     call tape_shift
-    mov [r15 + FD_b], rax
+    mov [r15 + FLD_b], rax
     inc r14
     jmp 1b
 6:  mov rdi, rbx
@@ -773,7 +787,13 @@ FN range_starts
     setnz al
     movzx eax, al
     EPILOGUE
-0:  mov rdi, rbx
+0:  mov rdi, rbx                # a fold_markers START line (the language configuration, langconf.s)
+    mov rsi, r12
+    call lc_fold_marker
+    cmp eax, 1
+    jne 71f
+    EPILOGUE
+71: mov rdi, rbx
     mov rsi, r12
     call indent_of
     test eax, eax
@@ -813,6 +833,31 @@ FN range_end
     call doc_line_of
     EPILOGUE
 0:  mov rdi, rbx
+    mov rsi, r12
+    call lc_fold_marker
+    cmp eax, 1
+    jne 71f
+    # a marker region: to its END line, nested regions counted
+    mov r13d, 1                 # depth
+    lea r14, [r12 + 1]
+4:  cmp r14, [rbx + DOC_nlines]
+    jae 8f
+    mov rdi, rbx
+    mov rsi, r14
+    call lc_fold_marker
+    cmp eax, 1
+    jne 5f
+    inc r13d
+    jmp 6f
+5:  cmp eax, 2
+    jne 6f
+    dec r13d
+    jnz 6f
+    mov rax, r14
+    EPILOGUE
+6:  inc r14
+    jmp 4b
+71: mov rdi, rbx
     mov rsi, r12
     call range_starts
     test eax, eax
@@ -886,7 +931,7 @@ fold_innermost:
     test rax, rax
     jz 2f
     mov rdi, rbx
-    mov rsi, [rax + FD_b]
+    mov rsi, [rax + FLD_b]
     call doc_line_of
     cmp rax, r14
     je 3f
@@ -1159,7 +1204,7 @@ fold_list_out:
     jae 9f
     cmp r14, FOLD_SESSION_MAX
     jae 9f
-    imul r15, r14, FD_SIZE
+    imul r15, r14, FLD_SIZE
     add r15, [r13 + PRS_folds + VEC_ptr]
     test r14, r14
     jz 2f
@@ -1168,7 +1213,7 @@ fold_list_out:
     call sb_push_byte
 2:  inc r14
     mov rdi, rbx
-    mov rsi, [r15 + FD_a]
+    mov rsi, [r15 + FLD_a]
     call doc_line_of
     mov rdi, r12
     mov rsi, rax
@@ -1177,7 +1222,7 @@ fold_list_out:
     mov esi, '-'
     call sb_push_byte
     mov rdi, rbx
-    mov rsi, [r15 + FD_b]
+    mov rsi, [r15 + FLD_b]
     call doc_line_of
     mov rdi, r12
     mov rsi, rax
@@ -1214,6 +1259,8 @@ FN fold_session_in
     mov r12, rsi
     test r12, r12
     jz 9f
+    cmp dword ptr [rip + cfg_folding], 0
+    je 9f                       # folding is off: nothing is restored
     # after "folds=" when there is one, else the string itself is the list
     mov r13, r12
 1:  cmp byte ptr [r13], 0
@@ -1335,7 +1382,7 @@ FN fold_last_line
     test rax, rax
     jz 1f
     mov rdi, rbx
-    mov rsi, [rax + FD_b]
+    mov rsi, [rax + FLD_b]
     call doc_line_of
     EPILOGUE
 1:  mov rax, r12
@@ -1523,12 +1570,12 @@ fd_has:
     xor ecx, ecx
 1:  cmp rcx, [rdi + PRS_folds + VEC_len]
     jae 8f
-    imul rax, rcx, FD_SIZE
+    imul rax, rcx, FLD_SIZE
     add rax, [rdi + PRS_folds + VEC_ptr]
     inc rcx
-    cmp [rax + FD_a], rsi
+    cmp [rax + FLD_a], rsi
     jne 1b
-    cmp [rax + FD_b], rdx
+    cmp [rax + FLD_b], rdx
     jne 1b
     mov eax, 1
     ret
@@ -1594,7 +1641,7 @@ fr_levels:
     mov [rsp], edi
     mov rbx, rsi
     mov r12, [rbx + DOC_pres]
-    mov qword ptr [rip + fl_stack + VEC_len], 0
+    mov qword ptr [rip + fr_stack + VEC_len], 0
     xor r13d, r13d
 1:  cmp r13, [r12 + PRS_fr + VEC_len]
     jae 9f
@@ -1605,18 +1652,18 @@ fr_levels:
     cmp rax, [r14 + FRG_a]
     jbe 1b
     # the ranges ending before this header no longer hold anything
-2:  mov rcx, [rip + fl_stack + VEC_len]
+2:  mov rcx, [rip + fr_stack + VEC_len]
     test rcx, rcx
     jz 3f
-    mov rdx, [rip + fl_stack + VEC_ptr]
+    mov rdx, [rip + fr_stack + VEC_ptr]
     mov rax, [rdx + rcx*8 - 8]
     cmp rax, [r14 + FRG_a]
     jae 3f
-    dec qword ptr [rip + fl_stack + VEC_len]
+    dec qword ptr [rip + fr_stack + VEC_len]
     jmp 2b
-3:  mov r15, [rip + fl_stack + VEC_len]
+3:  mov r15, [rip + fr_stack + VEC_len]
     inc r15                     # its depth
-    lea rdi, [rip + fl_stack]
+    lea rdi, [rip + fr_stack]
     mov esi, 8
     call vec_push
     mov rcx, [r14 + FRG_b]
@@ -1728,7 +1775,8 @@ FN fold_ext_gone
 
 .bss
 .p2align 3
-fl_stack: .zero VEC_SIZE        # fold_levels: open headers (line, indentation)
+fl_stack: .zero VEC_SIZE        # fold_levels: open headers (line, indentation, deeper seen: 24 bytes)
+fr_stack: .zero VEC_SIZE        # fr_levels: the ends of the provider ranges holding the next (8 bytes)
 vi_fold: .zero VI_SIZE
 fs_tmp: .zero SB_SIZE
 fr_keys: .zero VEC_SIZE         # fold_ranges_set's sort keys

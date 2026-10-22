@@ -43,14 +43,14 @@ class Testing(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90, exts=EXTS):
+    def run_editor(self, actions, mode=None, files=('a_test.go',), timeout=90, exts=EXTS, size='1000x600'):
         env = dict(self.env)
         if mode:
             env['TESTS_MODE'] = mode
         opens = ['open ' + (self.proj / name).as_posix() for name in files]
         script = self.work / 'actions.rsc'
         script.write_text('\n'.join(['wait 100', *opens, *actions, 'quit']) + '\n', encoding='utf-8')
-        result = subprocess.run([str(EXE), self.proj.as_posix(), '--headless', '1000x600', '--scale', '1',
+        result = subprocess.run([str(EXE), self.proj.as_posix(), '--headless', size, '--scale', '1',
                                  '--extensions', str(exts), '--script', script.as_posix()],
                                 env=env, capture_output=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
@@ -100,6 +100,12 @@ class Testing(unittest.TestCase):
         self.assertTrue([l for l in log if l.startswith('remove ok ')], log)
         self.assertFalse([l for l in out if 'go:example/other' in l], out)
         self.assertFalse([l for l in out if ' id=x ' in l or ' id=r ' in l], out)
+
+    def test_a_replace_counts_the_subtrees_it_moves_against_the_caps(self):
+        self.run_editor(['cmd testing', 'wait-test-items 50000', 'wait 500'], mode='movecap', timeout=120)
+        over = self.logged('movecap-over ')
+        self.assertTrue(over and over[0].endswith('toobig 50000 items per extension'), self.fake_log()[-5:])
+        self.assertTrue(self.logged('movecap-ok ok '), self.fake_log()[-5:])
 
     def test_item_caps(self):
         self.run_editor(['cmd testing', 'wait-test-items 50000', 'wait 500'], mode='flood')
@@ -300,6 +306,23 @@ class Testing(unittest.TestCase):
         self.assertTrue(self.logged('coverage ok'), self.fake_log())
         self.assertIn('covered=3 partial=1 missed=0 lines=3:C,5:C,6:P,7:C', out)
 
+    def test_an_expected_actual_tab_is_no_git_diff(self):
+        # with Git on, a diff tab of the values beside a changed file: Open Changes finds the file's
+        # own diff, and quitting remembers no Git diff for the values' tab
+        env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', HOME=self.work.as_posix())
+        for cmd in (['git', 'init', '-q'], ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'],
+                    ['git', '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'one']):
+            subprocess.run(cmd, cwd=self.proj, env=env, check=True, capture_output=True)
+        (self.proj / 'a_test.go').write_text(SOURCE + '// changed\n', encoding='utf-8')
+        config = self.work / 'config/rhun/config'
+        config.write_text(CONFIG.replace('[git]\nenabled = false\n', ''), encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action diff', 'wait 100',
+                               'cmd next_tab', 'cmd git_changes', 'wait 1500', 'print-tabs'])
+        tabs = [l for l in out if l.startswith('tabs=')][-1]
+        self.assertIn('Expected \u2194 Actual: TestB', tabs)
+        self.assertEqual(tabs.count('a_test.go'), 2, tabs)
+
     def test_failures_become_problems_and_go_with_their_item(self):
         out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-marks'])
         at = out.index('tests=idle')
@@ -322,6 +345,122 @@ class Testing(unittest.TestCase):
         self.assertIn('cov=3:C,5:C,6:P,7:C', out)
         self.assertTrue([l for l in out if 'Run with Coverage' in l], out)
         self.assertEqual(out[-1], 'cov=')
+
+    def test_glyphs_problems_and_coverage_follow_edits_until_replaced(self):
+        # two lines typed at the top after a coverage run; TestA runs again, so the problems and
+        # glyphs are set again from the model: TestB's old place and the coverage move with the text
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 100', 'echo @before',
+                               'print-gutter', 'print-marks', 'cmd goto_line', 'type 1', 'key Return',
+                               'type //a', 'key Return', 'type //b', 'key Return',
+                               'test-select testsfake go:example/pkg.TestA', 'test-action run', 'wait-tests',
+                               'wait 100', 'echo @after', 'print-gutter', 'print-marks',
+                               'test-select testsfake go:example/pkg.TestB', 'test-action failure', 'print-state',
+                               'test-select testsfake go:example/pkg.TestC', 'test-action goto', 'print-state',
+                               'test-gutter 9', 'wait-tests',
+                               'cmd goto_line', 'type 10', 'key Return', 'cmd test_run_cursor', 'wait-tests'])
+        at = out.index('@after')
+        before, after = out[out.index('@before'):at], out[at:]
+        self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', before)
+        self.assertIn('cov=3:C,5:C,6:P,7:C', before)
+        self.assertIn('line=5 glyph=passed item=go:example/pkg.TestA', after)
+        self.assertIn('line=9 glyph=failed item=go:example/pkg.TestB', after)
+        self.assertIn('line=13 glyph=skipped item=go:example/pkg.TestC', after)
+        self.assertIn('cov=5:C,7:C,8:P,9:C', after)
+        self.assertIn('10 2 10 7 error problems:Fake Tests TestB: Greet mismatch', after)
+        # TestB's failure and TestC are where they are now; a click on TestB's glyph where it is now
+        # runs it, as Run Test at Cursor in its body does
+        self.assertIn('run 3 run 1 go:example/pkg.TestB', self.fake_log())
+        self.assertIn('run 4 run 1 go:example/pkg.TestB', self.fake_log())
+        states = [l for l in after if l.startswith('tabs=')]
+        self.assertIn(' line=10 col=5 ', states[0])
+        self.assertIn(' line=13 col=1 ', states[1])
+
+    def test_the_status_bar_item_counts_runs_then_results_and_shows_testing(self):
+        out = self.run_editor(['wait 200', 'print-test-status', *EXPAND, 'print-test-status', 'cmd test_run_all',
+                               'wait 300', 'print-test-status', 'cmd test_cancel', 'wait-tests', 'wait 100',
+                               'print-test-status'], mode='slow')
+        status = [l for l in out if l.startswith('test-status')]
+        self.assertEqual(status[:2], ['test-status none'] * 2)
+        self.assertTrue(status[2].endswith(' text=Testing 0/3'), status)
+        self.assertTrue(status[3].endswith(' text=passed=0 failed=0'), status)
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-test-status',
+                               'key Escape', 'print-sidebar'])
+        status = [l for l in out if l.startswith('test-status')][-1]
+        self.assertTrue(status.endswith(' text=passed=1 failed=1'), status)
+        f = dict(kv.split('=', 1) for kv in status.split(' ')[1:5])
+        x, y = int(f['x']) + int(f['w']) // 2, int(f['y']) + int(f['h']) // 2
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'wait 100', 'print-sidebar',
+                               'move %d %d' % (x, y), 'click %d %d' % (x, y), 'wait 100', 'print-sidebar'])
+        bars = [l for l in out if l.startswith('testing title=Testing')]
+        self.assertTrue(bars and ' visible' in bars[-1], out)
+
+    def test_the_filter_keeps_matching_rows_and_failed_only(self):
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'test-collapse testsfake go:example/pkg',
+                               'echo @all', 'print-testing', 'test-filter b', 'echo @b', 'print-testing',
+                               'test-filter test c', 'echo @c', 'print-testing', 'test-filter', 'test-failed-only on',
+                               'echo @failed', 'print-testing', 'test-failed-only off', 'echo @off', 'print-testing'])
+        def labels(a, b):
+            seg = out[out.index(a) + 1:out.index(b) if b else len(out)]
+            return [l.split(' label=')[1].split(' icon=')[0].split(' desc=')[0] for l in seg if l.startswith('row ')]
+        self.assertEqual(labels('@all', '@b'), ['Fake Tests', 'pkg', 'other'])
+        self.assertEqual(labels('@b', '@c'), ['Fake Tests', 'pkg', 'a_test.go', 'TestB'])
+        self.assertEqual(labels('@c', '@failed'), ['Fake Tests', 'pkg', 'a_test.go', 'TestC'])
+        self.assertEqual(labels('@failed', '@off'), ['Fake Tests', 'pkg', 'a_test.go', 'TestB'])
+        # without a filter the tree is as the user left it
+        self.assertEqual(labels('@off', None), ['Fake Tests', 'pkg', 'other'])
+        # typing in the field filters; Escape clears it, then leaves it; the buttons say what they do
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait-tests', 'move 80 374', 'click 80 374', 'type c',
+                               'wait 50', 'echo @typed', 'print-testing', 'key Escape', 'key Escape', 'echo @cleared',
+                               'print-testing', 'move 220 374', 'wait 900', 'print-tip', 'move 152 321', 'wait 900',
+                               'print-tip'])
+        typed = [l for l in out[out.index('@typed'):out.index('@cleared')] if l.startswith('row ')]
+        self.assertTrue(typed[-1].startswith('row 3 ') and ' label=TestC ' in typed[-1], typed)
+        self.assertEqual(len([l for l in out[out.index('@cleared'):] if l.startswith('row ')]), 7, out)
+        tips = [l for l in out if l.startswith('tip')]
+        self.assertTrue(any('Show only failed tests' in l for l in tips), tips)
+        self.assertTrue(any('Run All Tests' in l for l in tips), tips)
+
+    def test_the_coverage_section_lists_files_least_covered_first(self):
+        out = self.run_editor([*EXPAND, 'print-test-coverage', 'cmd test_coverage_all', 'wait-tests', 'wait 100',
+                               'print-test-coverage', 'print-sidebar', 'cmd test_coverage_toggle', 'wait 100',
+                               'print-test-coverage'], mode='cov2')
+        self.assertIn('coverage-section none', out)
+        self.assertEqual([l for l in out if l.startswith('file=')][:2],
+                         ['file=/cov/low.go desc=1/4 \u00b7 25%', 'file=a_test.go desc=4/4 \u00b7 100%'])
+        self.assertTrue([l for l in out if l.startswith('coverage title=Coverage at=')], out)
+
+    def test_a_path_repeated_in_one_coverage_message_counts_once(self):
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'print-coverage /cov/rep.go'],
+                              mode='covrepeat', timeout=120)
+        self.assertTrue(self.logged('covrepeat ok '), self.fake_log()[-5:])
+        self.assertTrue([l for l in out if l.startswith('covered=1 partial=0 missed=0 lines=1048576:C')], out)
+
+    def test_coverage_tints_belong_to_their_file(self):
+        # a document opened after the covered one closed (its memory may be the same) has none
+        (self.proj / 'b.go').write_text(SOURCE.replace('pkg', 'other'), encoding='utf-8')
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 100', 'print-gutter',
+                               'cmd close_tab', 'open ' + (self.proj / 'b.go').as_posix(), 'wait 100', 'print-gutter'])
+        covs = [l for l in out if l.startswith('cov=')]
+        self.assertEqual(covs[0], 'cov=3:C,5:C,6:P,7:C')
+        self.assertEqual(covs[-1], 'cov=')
+
+    def test_glyphs_go_with_their_item_and_follow_the_setting(self):
+        # Settings, searched for the one switch (at 1400x900 its knob is at 1146,348); the second time
+        # the page still has the search
+        toggle = ['cmd settings', 'type test buttons', 'wait 100', 'click 1146 348', 'wait 100',
+                  'open ' + (self.proj / 'a_test.go').as_posix(), 'wait 100']
+        out = self.run_editor([*EXPAND, 'wait 200', 'echo @before', 'print-gutter', 'wait 1500', 'echo @removed',
+                               'print-gutter', *toggle, 'echo @off', 'print-gutter', *toggle[:1], *toggle[2:],
+                               'echo @on', 'print-gutter'], mode='removeb', size='1400x900')
+        def seg(a, b):
+            return out[out.index(a) + 1:out.index(b) if b else len(out)]
+        self.assertIn('line=7 glyph=play item=go:example/pkg.TestB', seg('@before', '@removed'))
+        self.assertTrue(self.logged('removeb ok '), self.fake_log())
+        removed = seg('@removed', '@off')
+        self.assertFalse([l for l in removed if 'TestB' in l], removed)
+        self.assertIn('line=3 glyph=play item=go:example/pkg.TestA', removed)
+        self.assertFalse([l for l in seg('@off', '@on') if l.startswith('line=')], out)
+        self.assertIn('line=3 glyph=play item=go:example/pkg.TestA', seg('@on', None))
 
     # --- the Testing section ---
 
@@ -353,6 +492,14 @@ class Testing(unittest.TestCase):
         self.assertIn("recv 2 tests-resolve 14 b'go:example/pkg'", self.fake_log())
 
     # --- test-exec ---
+
+    def test_a_second_exec_while_the_question_is_open_leaves_the_parked_command(self):
+        # two runs ask before the user answers: the second is busy, the first runs as asked
+        out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 300', 'cmd test_run_all', 'wait 500',
+                               'dialog yes', 'wait-tests'], mode='exec')
+        log = self.fake_log()
+        self.assertTrue([l for l in log if l.startswith('exec error ') and ' busy a question is open' in l], log)
+        self.assertIn("exec-result exit=3 out=b'out-line\\n' err=b'err-line\\n'", log)
 
     def test_exec_runs_a_program_as_the_user_and_passes_its_output(self):
         out = self.run_editor([*EXPAND, 'cmd test_run_all', 'wait 500', 'print-dialog', 'dialog yes', 'wait-tests',

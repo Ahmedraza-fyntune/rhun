@@ -34,6 +34,9 @@ ENDSTRUCT VI_SIZE
 .bss
 .p2align 3
 vis: .zero VI_SIZE * VI_MAX
+vb_tmp: .zero VI_SIZE           # viewimg_blit_img's image as a VI
+.globl vimg_gen
+vimg_gen: .long 0               # an image went: static pictures render again
 vi_seq: .long 0
 .p2align 3
 vc_ext: .quad 0                 # the vcopy waiting for its answer: its extension, id, when, cut
@@ -199,6 +202,7 @@ FN viewimg_owner_gone
 
 # views_redraw(): every picture renders again (an image went)
 views_redraw:
+    inc dword ptr [rip + vimg_gen]  # static pictures (extview.s pic_draw)
     xor ecx, ecx
     lea rax, [rip + g_views]
 1:  cmp ecx, VW_MAX
@@ -209,6 +213,51 @@ views_redraw:
     jmp 1b
 9:  mov dword ptr [rip + g_dirty], 1
     ret
+
+# viewimg_size(ext, id) -> eax its width, edx its height; 0, 0 when the extension has no such image
+FN viewimg_size
+    sub rsp, 8
+    call viewimg_find
+    add rsp, 8
+    test rax, rax
+    jz 8f
+    mov edx, [rax + VI_h]
+    mov eax, [rax + VI_w]
+    ret
+8:  xor eax, eax
+    xor edx, edx
+    ret
+
+# viewimg_blit_id(x, y, w, h, ext, id): that extension's image drawn so, when it has it
+FN viewimg_blit_id
+    PROLOGUE 16
+    mov [rsp], edi
+    mov [rsp + 4], esi
+    mov [rsp + 8], edx
+    mov [rsp + 12], ecx
+    mov rdi, r8
+    mov esi, r9d
+    call viewimg_find
+    test rax, rax
+    jz 9f
+    mov r8, rax
+    mov edi, [rsp]
+    mov esi, [rsp + 4]
+    mov edx, [rsp + 8]
+    mov ecx, [rsp + 12]
+    call viewimg_blit
+9:  EPILOGUE
+
+# viewimg_blit_img(x, y, w, h, IMG*): a decoded image (image.s) drawn so
+FN viewimg_blit_img
+    mov rax, [r8 + IMG_px]
+    mov [rip + vb_tmp + VI_px], rax
+    mov eax, [r8 + IMG_w]
+    mov [rip + vb_tmp + VI_w], eax
+    mov eax, [r8 + IMG_h]
+    mov [rip + vb_tmp + VI_h], eax
+    lea r8, [rip + vb_tmp]
+    jmp viewimg_blit
 
 # viewimg_blit(x, y, w, h, VI*): the image scaled into the box (nearest pixel) over the canvas,
 #   within its clip
@@ -425,40 +474,12 @@ FN viewpic_key
     call keys_on
     test eax, eax
     jz 8f
-    mov edi, r12d
-    mov esi, r14d
+    mov edi, r12d               # a key a binding takes: the binding runs (copy, cut, select_all and
+    mov esi, r14d               # paste reach the picture through their commands, chords too)
     call keys_lookup
     test rax, rax
-    jz 1f
-    lea rcx, [rip + cmd_copy]
-    cmp rax, rcx
-    je 5f
-    lea rcx, [rip + cmd_cut]
-    cmp rax, rcx
-    je 6f
-    lea rcx, [rip + cmd_select_all]
-    cmp rax, rcx
-    jne 8f                      # the binding runs (paste: app_on_paste brings it back here)
-    mov rdi, rbx
-    call extview_event_head
-    test eax, eax
-    jz 7f
-    call extview_evbuf
-    mov rdi, rax
-    lea rsi, [rip + .Le_selectall]
-    call sb_push_cstr
-    mov rdi, rbx
-    call extview_event_send
-    jmp 7f
-5:  mov rdi, rbx
-    xor esi, esi
-    call send_vcopy
-    jmp 7f
-6:  mov rdi, rbx
-    mov esi, 1
-    call send_vcopy
-    jmp 7f
-1:  # "key MODS NAME"
+    jnz 8f
+    # "key MODS NAME"
     mov edi, r12d
     call key_name
     test rax, rax
@@ -771,12 +792,67 @@ FN views_paste_target
 8:  xor eax, eax
     EPILOGUE
 
-# views_paste(ptr, len) -> eax 1 when a picture with the keyboard took the paste (app_on_paste)
+# views_clip_command(kind) -> eax 1 when a view took the command (cmd_copy, cmd_cut, cmd_select_all:
+#   keys and chords alike): a doc view with the keyboard copies its selected text or selects it
+#   all; Copy with the pointer over a notification's selected Markdown copies that; a picture with
+#   the keyboard is asked (0 copy and 1 cut: vcopy; 2 select_all: selectall)
+FN views_clip_command
+    PROLOGUE
+    mov r12d, edi
+    call rview_focused_doc      # a doc view: its selected text, or all of it selected
+    test rax, rax
+    jz 2f
+    mov rdi, rax
+    mov esi, r12d
+    call mdview_clip
+    jmp 9f
+2:  test r12d, r12d             # Copy with the pointer over a notification's selected text
+    jnz 3f
+    call notify_copy_selection
+    test eax, eax
+    jnz 9f
+3:  call views_paste_target
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    cmp r12d, 2
+    je 1f
+    mov rdi, rbx
+    mov esi, r12d
+    call send_vcopy
+    jmp 9f
+1:  mov rdi, rbx
+    call extview_event_head
+    test eax, eax
+    jz 9f
+    call extview_evbuf
+    mov rdi, rax
+    lea rsi, [rip + .Le_selectall]
+    call sb_push_cstr
+    mov rdi, rbx
+    call extview_event_send
+9:  mov dword ptr [rip + g_dirty], 1
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# views_paste(ptr, len) -> eax 1 when a picture or a form field with the keyboard took the paste
+#   (app_on_paste)
 FN views_paste
     PROLOGUE
     mov r12, rdi
     mov r13, rsi
-    call views_focused_picture
+    call rview_focused_form
+    test rax, rax
+    jz 1f
+    mov rdi, rax
+    mov rsi, r12
+    mov rdx, r13
+    call form_paste
+    test eax, eax
+    jnz 9f
+1:  call views_focused_picture
     test rax, rax
     jz 9f
     mov rdi, rax
@@ -791,6 +867,9 @@ FN views_features_agreed
     FEAT_TEST rdi, FEAT_VIEW_TREE
     jnz 1f
     FEAT_CLEAR rdi, FEAT_VIEW_LOG
+    FEAT_CLEAR rdi, FEAT_VIEW_FORM
+    FEAT_CLEAR rdi, FEAT_VIEW_TABLE
+    FEAT_CLEAR rdi, FEAT_VIEW_DOC
 1:  FEAT_TEST rdi, FEAT_VIEWS
     jnz 2f
     FEAT_CLEAR rdi, FEAT_VIEW_KEYS

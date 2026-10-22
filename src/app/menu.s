@@ -6,7 +6,8 @@
 # For other parts of rhun:
 #   menu_open_editor(), menu_open_explorer(items, node), menu_open_root(items),
 #   menu_open_tab(items, tab), menu_open_terminal(items, n): open a built-in menu with the
-#   extensions' items (each sets the target first)
+#   extensions' items (each sets the target first); menu_open_scm(SL_*, items, target line, len,
+#   path) for source control rows (scm group)
 #   menu_contrib(loc, CT*, target line, len, add fn(label, len, icon cstr, row)) and
 #   menu_contrib_run(row): the items of a location for buttons the views part draws
 .include "rhun.inc"
@@ -20,7 +21,13 @@
 .equ MLOC_VIEW_TITLE, 7
 .equ MLOC_VIEW_ITEM, 8
 .equ MLOC_VIEW_ITEM_INLINE, 9
-.equ MLOC_SUB, 10               # an item of a [submenu.NAME]
+# source control rows (scm group: scmext.s, scmpanel.s; menu_open_scm), in SL_* order
+.equ MLOC_HISTORY_COMMIT, 10
+.equ MLOC_HISTORY_FILE, 11
+.equ MLOC_SCM_RESOURCE, 12
+.equ MLOC_SCM_GROUP, 13
+.equ MLOC_SCM_TITLE, 14         # buttons in a version control panel's header (menu_scm_title_buttons)
+.equ MLOC_SUB, 15               # an item of a [submenu.NAME]
 # an extension's menu item (mi_list[extension index])
 .equ MI_loc, 0
 .equ MI_order, 4
@@ -83,6 +90,7 @@ mn_ncands: .quad 0
 mn_cand_tmp: .zero MC_SIZE
 mnt_menu: .zero MNT_SIZE        # the open menu's target
 mnt_btn: .zero MNT_SIZE         # the target of the buttons being drawn
+scm_prov: .zero 256             # its scmProvider while scm_title buttons evaluate (menu_scm_title_buttons)
 mnt_cur: .quad 0                # the one being set up
 mb_rows: .zero MB_MAX * MB_SIZE # the buttons of a title bar or a tree row (menu_buttons_draw)
 mb_count: .quad 0
@@ -1252,6 +1260,92 @@ FN menu_open_explorer
     call mn_show
     EPILOGUE
 
+# FN menu_open_scm(SL_*, items, target line ptr, len, absolute path cstr or 0): the menu of a source
+#   control row (scm group: the history's commits and files, Source Control's and extensions'
+#   panels' resources and groups) with the extensions' [menu.history_commit], [menu.history_file],
+#   [menu.scm_resource] and [menu.scm_group] items; TARGET is the caller's line ("commit SHA",
+#   "commit SHA PATH", "resource GROUP PATH", "group GROUP"), targetKind its first word
+FN menu_open_scm
+    PROLOGUE 16
+    mov [rsp], edi
+    mov r12, rsi
+    mov r13, rdx
+    mov r14, rcx
+    mov r15, r8
+    call mt_menu
+    mov eax, [rsp]
+    lea rcx, [rip + scm_kinds]
+    mov rdi, [rcx + rax*8]
+    xor esi, esi
+    mov rdx, r15
+    call mt_begin
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    call sb_clear
+    mov rdi, [rip + mnt_cur]
+    add rdi, MNT_line
+    mov rsi, r13
+    mov rdx, r14
+    call sb_push
+    mov eax, [rsp]
+    lea rcx, [rip + scm_locs]
+    mov edi, [rcx + rax*8]
+    mov rsi, r12
+    mov edx, [rip + g_mx]
+    mov ecx, [rip + g_my]
+    call mn_show
+    EPILOGUE
+
+# FN menu_scm_title_buttons(target line ptr, len, right, y, h, first widget id) -> eax the width drawn:
+#   the extensions' [menu.scm_title] items as buttons in a version control panel's header (scm group),
+#   targetKind scm, TARGET the caller's line ("scm OWNER/NAME ROOT"); at most 3 and "…"
+FN menu_scm_title_buttons
+    PROLOGUE 32
+    mov [rsp], edx
+    mov [rsp + 4], ecx
+    mov [rsp + 8], r8d
+    mov [rsp + 12], r9d
+    mov r12, rdi
+    mov r13, rsi
+    lea rax, [rip + mnt_btn]
+    mov [rip + mnt_cur], rax
+    lea rdi, [rip + .Lks_scm]
+    xor esi, esi
+    xor edx, edx
+    call mt_begin
+    lea rdi, [rip + mnt_btn + MNT_line]
+    call sb_clear
+    lea rdi, [rip + mnt_btn + MNT_line]
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    # scmProvider is the line's second word while the items' clauses evaluate (no key is set)
+    lea rdi, [rip + scm_prov]
+    lea rsi, [r12 + 4]          # after "scm "
+    lea rdx, [r12 + r13]
+    xor ecx, ecx
+1:  cmp rsi, rdx
+    jae 2f
+    cmp ecx, 255
+    jae 2f
+    mov al, [rsi]
+    cmp al, ' '
+    je 2f
+    mov [rdi + rcx], al
+    inc rsi
+    inc ecx
+    jmp 1b
+2:  mov byte ptr [rdi + rcx], 0
+    mov [rip + mnt_btn + MTG_scm], rdi
+    mov edi, MLOC_SCM_TITLE
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    mov r8d, 3
+    mov r9d, [rsp + 12]
+    call menu_buttons_draw
+    EPILOGUE
+
 # FN menu_open_root(items): the menu of the explorer's empty area: "root PATH" (the project)
 FN menu_open_root
     PROLOGUE
@@ -1939,7 +2033,20 @@ FN menu_title_buttons
 .section .rodata
 .p2align 3
 loc_names: .quad .Ll_editor, .Ll_explorer, .Ll_tab, .Ll_terminal, .Ll_extension, .Ll_editor_title
-    .quad .Ll_view_title, .Ll_view_item, .Ll_view_item_inline, 0
+    .quad .Ll_view_title, .Ll_view_item, .Ll_view_item_inline
+    .quad .Ll_history_commit, .Ll_history_file, .Ll_scm_resource, .Ll_scm_group, .Ll_scm_title, 0
+# a source control row's location and its targetKind, by SL_* (menu_open_scm)
+scm_locs: .quad 0, MLOC_HISTORY_COMMIT, MLOC_HISTORY_FILE, MLOC_SCM_RESOURCE, MLOC_SCM_GROUP
+scm_kinds: .quad 0, .Lks_commit, .Lks_commit, .Lks_resource, .Lks_group
+.Ll_history_commit: .asciz "history_commit"
+.Ll_history_file: .asciz "history_file"
+.Ll_scm_resource: .asciz "scm_resource"
+.Ll_scm_group: .asciz "scm_group"
+.Ll_scm_title: .asciz "scm_title"
+.Lks_scm: .asciz "scm"
+.Lks_commit: .asciz "commit"
+.Lks_resource: .asciz "resource"
+.Lks_group: .asciz "group"
 # ITEM.FIELD: the field's offset in MI, -1 order (a number), -2 when (a clause)
 mi_fields: .quad .Lf_command, MI_cmd, .Lf_group, MI_group, .Lf_order, -1, .Lf_when, -2
     .quad .Lf_args, MI_args, .Lf_submenu, MI_sub, 0, 0

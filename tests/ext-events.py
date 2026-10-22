@@ -39,8 +39,8 @@ def build(folder, windows=False, mutation=None):
                        '    call active_doc_id'),
             'closed': ('    mov qword ptr [r13 + XK_phase], XP_NEED_OPEN\n', '    nop\n'),
             'debt': ('mov qword ptr [rax + XK_resync], 1\n', 'nop\n'),
-            'request': ('    call out_end\n    test rax, rax\n    js 8f\n    mov rax, r13',
-                        '    call out_end\n    mov rax, r13'),
+            'request': ('    call out_end\n    test rax, rax\n    js 8f\n    mov rdi, [rsp]              # resources group',
+                        '    call out_end\n    mov rdi, [rsp]              # resources group'),
         }[mutation]
         target = protocol if mutation in ('request', 'full', 'range') else events
         if mutation == 'range':

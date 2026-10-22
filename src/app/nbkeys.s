@@ -550,7 +550,13 @@ FN nb_key
     jne 59f
     xor dword ptr [r15 + NBC_collapsed], 1
     jmp 7f
-59: # other characters do nothing in command mode
+59: # other characters do nothing in command mode, nor do the keys that edit text
+    cmp r12d, KEY_BACKSPACE
+    je 7f
+    cmp r12d, KEY_DELETE
+    je 7f
+    cmp r12d, KEY_TAB
+    je 7f
     cmp r13d, 32
     jb 8f
     jmp 7f
@@ -1047,12 +1053,18 @@ FN nb_dump_output
     mov rdi, r12
     lea rsi, [rip + .Ld_ierr]
     call sb_push_cstr
-33: cmp qword ptr [rbx + NBO_img], 0
+33: cmp qword ptr [rbx + NBO_pic], 0  # a picture: the size it was drawn at
+    je 331f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_picture]
+    call sb_push_cstr
+    jmp 332f
+331: cmp qword ptr [rbx + NBO_img], 0
     je 34f
     mov rdi, r12
     lea rsi, [rip + .Ld_image]
     call sb_push_cstr
-    mov rdi, r12
+332: mov rdi, r12
     mov esi, [rbx + NBO_iw]
     call sb_push_u64
     mov rdi, r12
@@ -1070,7 +1082,13 @@ FN nb_dump_output
     js 7f
     imul rax, rax, NBI_SIZE
     add rax, [rbx + NBO_items + VEC_ptr]
-    cmp dword ptr [rax + NBI_type], NBIT_ANSI
+    cmp qword ptr [rbx + NBO_md], 0
+    je 31f
+    mov rdi, [rbx + NBO_md]     # a rich document: how it is laid out
+    mov rsi, r12
+    call md_dump
+    jmp 7f
+31: cmp dword ptr [rax + NBI_type], NBIT_ANSI
     ja 7f
     mov r13, [rax + NBI_data + SB_ptr]
     mov r14, [rax + NBI_data + SB_len]
@@ -1234,6 +1252,119 @@ kernel_names: .quad .Lr_none, .Lk_idle, .Lk_busy, .Lk_starting, .Lk_dead
 .Ld_keep: .asciz " keep="
 .Ld_ierr: .asciz " image=error"
 .Ld_image: .asciz " image="
+.Ld_picture: .asciz " picture="
 .Ld_esc: .asciz "\\e"
 .Ld_eoo: .asciz "<eoo>\n"
 .Ld_nooutput: .asciz "output=none\n<eoo>\n"
+
+.text
+# nb_find_step(dir, needle, len) -> eax 1 when the find bar's next (dir 1) or previous (-1) match
+#   is in another cell of the active notebook: that cell is selected, in edit mode, with the match
+#   selected (the keyboard stays where it was); 0 when g_doc is no cell or no other cell matches
+FN nb_find_step
+    PROLOGUE 32
+    mov [rsp], edi
+    mov [rsp + 8], rsi
+    mov [rsp + 16], rdx
+    call nb_active
+    test rax, rax
+    jz 8f
+    mov rbx, rax
+    mov r13, [rbx + NB_cells + VEC_len]
+    cmp r13, 1
+    jbe 8f
+    # the cell g_doc is
+    xor r12d, r12d
+1:  cmp r12, r13
+    jae 8f
+    mov rax, [rbx + NB_cells + VEC_ptr]
+    mov rax, [rax + r12*8]
+    mov rax, [rax + NBC_doc]
+    cmp rax, [rip + g_doc]
+    je 2f
+    inc r12
+    jmp 1b
+2:  mov r14d, 1                 # k: how many cells away
+3:  cmp r14, r13
+    jae 8f
+    movsxd rax, dword ptr [rsp]
+    imul rax, r14
+    add rax, r12
+    add rax, r13                # (i + dir * k) mod n, kept positive
+    xor edx, edx
+    div r13
+    mov r15, rdx
+    mov rax, [rbx + NB_cells + VEC_ptr]
+    mov rax, [rax + r15*8]
+    mov rdi, [rax + NBC_doc]
+    mov [rsp + 24], rdi
+    mov esi, [rsp]
+    mov rdx, [rsp + 8]
+    mov rcx, [rsp + 16]
+    call nb_doc_find
+    test rax, rax
+    jns 4f
+    inc r14
+    jmp 3b
+4:  # select it there
+    push rax
+    push rax
+    mov eax, [rip + g_focus]
+    mov [rsp + 8], eax
+    mov rdi, rbx
+    mov rsi, r15
+    mov edx, 1
+    call nb_select_mode
+    mov eax, [rsp + 8]
+    mov [rip + g_focus], eax
+    mov dword ptr [rbx + NB_reveal], 1
+    pop rax
+    pop rax
+    mov rcx, [rsp + 24]
+    mov [rcx + DOC_anchor], rax
+    add rax, [rsp + 16]
+    mov [rcx + DOC_cur], rax
+    or dword ptr [rcx + DOC_flags], DF_REVEAL
+    call ed_touch               # the selection as the editor keeps it (g_doc is that cell now)
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
+# nb_doc_find(doc, dir, needle, len) -> rax the first (dir 1) or last (dir -1) match in the cell,
+#   or -1
+nb_doc_find:
+    PROLOGUE 16
+    mov rbx, rdi
+    mov [rsp + 8], esi
+    mov r14, rdx
+    mov r15, rcx
+    call doc_len
+    mov r12, rax
+    mov rdi, rbx
+    call doc_contiguous
+    mov r13, rax
+    mov qword ptr [rsp], -1
+    xor ecx, ecx
+1:  mov rdi, r13
+    add rdi, rcx
+    mov rsi, r12
+    sub rsi, rcx
+    jbe 9f
+    mov rdx, r14
+    push rcx
+    push rcx
+    mov rcx, r15
+    call find_raw
+    pop rcx
+    pop rcx
+    test rax, rax
+    js 9f
+    add rax, rcx
+    mov [rsp], rax
+    cmp dword ptr [rsp + 8], 0
+    jg 9f                       # forward: the first one
+    lea rcx, [rax + 1]
+    jmp 1b
+9:  mov rax, [rsp]
+    EPILOGUE

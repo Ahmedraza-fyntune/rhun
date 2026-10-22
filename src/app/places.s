@@ -358,6 +358,7 @@ place_call_focus:
 #   for the items that came on or went off screen
 FN places_frame_end
     PROLOGUE
+    call rview_docs_frame_end   # doc views following an editor that scrolled this frame: once more
     call place_focused          # an item whose column went away gives the keyboard back
     mov edi, eax
     call place_at
@@ -1581,7 +1582,17 @@ FN views_timeout
     cmp rbx, rax
     jge 1f
 2:  mov rax, rbx
-1:  add rsp, 8
+1:  mov rbx, rax                # a quick input's busy spinner (quick.s)
+    call quick_timeout
+    movsxd rax, eax
+    cmp rbx, -1
+    je 3f
+    cmp rax, -1
+    je 4f
+    cmp rbx, rax
+    jge 3f
+4:  mov rax, rbx
+3:  add rsp, 8
     pop r12
     pop rbx
     ret
@@ -1591,7 +1602,11 @@ FN views_tick
     sub rsp, 8
     call rview_tick
     call notify_tick
-    add rsp, 8
+    call quick_timeout          # a quick input's busy spinner turns
+    cmp eax, -1
+    je 1f
+    mov dword ptr [rip + g_dirty], 1
+1:  add rsp, 8
     ret
 
 # places_init(): the explorer, the sidebar's first section

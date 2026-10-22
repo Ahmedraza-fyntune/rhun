@@ -24,6 +24,7 @@ rhun draws everything itself: it rasterizes TrueType fonts, icons and widgets in
 - Wayland with fractional scaling; X11 as a fallback
 - macOS on Apple silicon: Retina displays, input methods and dead keys, full screen, signed with a Developer ID
 - Windows x64: native window, Unicode paths and clipboard, per-monitor scaling, and a ConPTY terminal
+- Remote hosts: a window whose project, terminals, git and extensions are on a Linux machine reached by SSH, in a Docker or Podman container, or in WSL
 - Installs from GitHub releases; updates itself on Windows, Linux and macOS
 
 Open files follow edits made by agents and other tools. Writes arriving within 100 ms are grouped
@@ -384,6 +385,23 @@ Open Folder and Open File show a browser in the palette. It starts in the projec
 - A path can be typed or pasted, as in `/etc/` or `~/code/`. Hidden entries show once the name typed starts with a dot.
 - Open Folder lists only folders, led by **Open** and the folder shown, then **Open … in a new window**, which leaves this window as it is (on macOS the new window has a Dock icon of its own). Ctrl+Enter opens the selected folder without going into it.
 
+A window can hold several folders, a workspace. `rhun app lib` opens both; **Add Folder to
+Workspace…** (the project menu, or the palette) adds another, and **Remove Folder from Workspace**
+(a folder's menu in the explorer) takes one out. The first folder is the project: the window is named
+after the folders (`app + lib`), the explorer shows each folder as a root of its own, quick open and
+find in files list every folder's files with the folder's name first (`lib/pkg/p.go`), and a new
+terminal starts in the active file's folder. Folders cannot be inside one another, and a window has
+16 at most. The folders added to a project come back the next time it is opened. **Save Workspace
+As** writes `NAME.rhun-workspace`, which names the folders (and can hold settings for extensions);
+opening that file, from the command line or Open File, opens them all. Removing the first folder
+makes the next one the project.
+
+Each folder's git repository is followed: the explorer colors every folder's changes, and source
+control (the history's work tree row) starts with a line for each repository, with its branch and
+number of changes. The repository shown in the history, source control and the status bar is the
+active file's folder's; clicking another repository's line shows that one until you switch to
+another file. A file in a folder without a repository leaves the one shown as it is.
+
 ### Git
 
 In a git repository rhun shows what changed since the last commit. It runs the `git` program in the background, so the editor never waits for it, and follows commits, checkouts and edits made elsewhere, the built-in terminal included.
@@ -432,6 +450,44 @@ An installed extension that writes commit messages is listed after these, by its
 
 CLI references: [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [Codex authentication](https://learn.chatgpt.com/docs/auth), [Claude Code CLI](https://code.claude.com/docs/en/cli-reference), and [Ollama](https://docs.ollama.com/quickstart).
 
+### Remote hosts
+
+A remote window works on another machine: its project, files, explorer, Go to File, Find in Files,
+terminals, tasks, test runs, debug adapters, git, the agents panel's sessions and extensions are the
+host's, while the window, settings, themes, keys, installed extensions and updates stay on this
+computer. The host is Linux on x86-64 (a container on Apple silicon must be `linux/amd64`); the
+window can be Linux, macOS or Windows.
+
+- Open one from the project menu: **Connect to Host…** lists the `Host` lines of `~/.ssh/config`
+  and recent remotes, or takes a typed `user@host`; **Attach to Container…** lists `docker ps` (or
+  `podman ps`); on Windows **Connect to WSL…** lists the distributions. Each opens a new window. On
+  the command line: `rhun --remote ssh:HOST /path`, `--remote docker:NAME`, `podman:NAME` or
+  `wsl:DISTRO` (the path is optional: the host's home folder).
+- Connecting runs `ssh HOST sh -s` (or `docker exec -i NAME sh -s`, `wsl.exe -d DISTRO sh -s`) and
+  copies rhun's Linux build into `~/.cache/rhun-remote` on the host once; nothing else is installed
+  and no port is opened. On macOS and Windows that build is downloaded from the release first and
+  checked against its `SHA256SUMS`; `agent_binary = PATH` under `[remote]` names another one (a
+  development build). The title bar shows `HOST: folder` and the status bar `SSH: HOST`, whose menu
+  has Disconnect, Reconnect, Show Remote Log and the forwarded ports.
+- ssh's questions (a password, a passphrase, a new host key) appear in rhun's prompt (OpenSSH 8.4 or
+  later). On Windows rhun runs ssh without a prompt for now: use a key or ssh-agent, and accept a new
+  host's key in a terminal once.
+- When the connection drops, a bar says so and offers **Reconnect**. Documents stay open and
+  editable, and a save waits for the connection. Programs keep running on the host meanwhile:
+  Reconnect brings back the same terminals and extensions, and files changed there in between are
+  compared again. A host nobody reconnects to ends its programs after 3 hours (10 minutes when none
+  run); closing the window or **Disconnect** ends them at once. `RHUN_REMOTE_SESSION=0` makes them
+  end with the connection instead.
+- Extensions run on the host unless their manifest says `where = local`. rhun copies an extension
+  there once (its folder, or its release's Linux build when the installed one is for this computer),
+  keeps its state folder there, and the host's Linux holds it to its permissions with Landlock; its
+  page says when that kernel cannot.
+- **Remote: Forward a Port** makes a port of the host's loopback reachable at `localhost` here, with
+  the same number when it is free (ports below 1024 at 10000 plus the port); **Stop Forwarding Ports**
+  ends them. Pages an extension serves on the host's loopback are forwarded when it opens them.
+- `RHUN_SSH` names the ssh program to run, and `RHUN_RELEASES_URL` another place for the release's
+  Linux build. **Show Remote Log** opens `remote.log` in the state folder.
+
 ### Images
 
 PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame), BMP, ICO / CUR, QOI, PNM (PBM, PGM, PPM) and TGA open in an image tab; other binary files are not opened. An image is decoded when its tab is first shown and fits the view without being enlarged; transparent parts show a checkerboard. It is decoded again when the file changes on disk.
@@ -446,11 +502,23 @@ PNG, JPEG (baseline and progressive, EXIF orientation applied), GIF (first frame
 
 The status bar shows the size, the file size, the format and the zoom; clicking the zoom switches between fit and 100%.
 
+### Custom editors
+
+An extension can show a kind of file its own way: a hex editor for binaries, a table for CSV. Such
+a file opens in the extension's editor; **Reopen Editor With...** in the palette opens the active
+file with another editor or as text, and remembers the choice for files with the same extension
+(the config's `[editors]` section). Save, Save As, Undo, Redo, Revert File and the close
+question work in the editor's tab as in a text tab. An editor that keeps the file itself (a hex
+editor) has its unsaved changes backed up every 30 seconds: if its extension stops, the tab
+offers Restore Unsaved Changes, and if rhun stops, the file opens with them the next time.
+
 ### Notebooks
 
 A notebook file an extension provides for (the `jupyter` extension reads and writes `.ipynb`)
 opens in a notebook tab: its cells one under the other, each with its language's colors and every
-editor command, and under a code cell its outputs (text with its colors, errors, images). The
+editor command, and under a code cell its outputs (text with its colors, errors, images, tables
+and other rich documents, pictures). A Markdown cell shows its text rendered until you edit it
+(Enter or a double click); a link in it opens its file in a tab, or a web address in the browser. The
 toolbar runs all cells, interrupts or restarts the kernel and clears the outputs; the button at
 its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 
@@ -470,7 +538,8 @@ its right picks the kernel. Clicking a cell's `[ ]` column runs it.
 
 Kernels run as you, outside the extension's sandbox: the first time a notebook extension starts
 one in a project, rhun shows the command and asks (Allow or Cancel); Forget on the extension's
-page takes the permission back. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
+page takes the permission back. Find (Ctrl+F) searches the cell being edited, and Find Next and Find Previous go on to the next or
+previous cell with a match. Ctrl+S saves the notebook through its extension. A long text output shows its first 400 lines
 and opens whole in a tab of its own. Every action is in the command palette as Notebook: ....
 Notebook: Reopen as Text shows the file itself.
 
@@ -524,6 +593,58 @@ Duplicate Line, Move Line and Copy or Cut without a selection take a folded line
 lines. An edit inside a fold's hidden lines, or one that joins its first line with the next, removes
 the fold. Folds are kept with the session and in reopened tabs. `folding = false` under `[editor]`
 (**Folding** in Settings) turns the lane and folding off.
+
+### Inlay hints
+
+An extension that knows the code (a language server, through the lsp extension) can show what is
+not written: inferred types after names, parameter names before arguments, the ends of long
+blocks. Hints are drawn in a muted pill inside the line but are not part of the text: the cursor
+steps over them, and copying, searching and the status bar's column never see them. The pointer
+resting on a hint shows its tooltip; a click on a part that has a command runs it, or goes to the
+definition it names; a double click writes the hint into the text when it offers that (a type, for
+example). `inlay_hints = false` under `[editor]` (**Inlay hints** in Settings) turns them off.
+
+### Inline suggestions
+
+An extension (an AI assistant or a language server) can suggest what comes next as you type: the
+suggestion appears after the cursor in a muted color, its further lines below. Tab takes it,
+Ctrl+Right takes its next word, Escape or moving the cursor dismisses it, and typing what it shows
+keeps the rest. Alt+\ (Trigger Inline Completion) asks for one now. `inline_complete = false`
+under `[editor]` (**Inline suggestions** in Settings) stops asking as you type;
+`inline_complete_delay` is the pause after typing, in milliseconds.
+
+### Colors
+
+When an extension (a language server) finds colors in the code, a small square in each color sits
+before it. A click on the square asks for a new color (`#rrggbb` or `#rrggbbaa`) and the extension
+writes it in the code's own notation. `color_swatches = false` under `[editor]` (**Color
+swatches** in Settings) turns the squares off.
+
+### Highlights
+
+When the cursor rests on a name, its other places in the file are marked with a soft background,
+places that write it a little stronger, when an extension (a language server) knows them;
+otherwise rhun marks the same word's other occurrences nearby. The marks go when the cursor moves
+away or the text changes. `highlight_occurrences = false` under `[editor]` (**Highlight
+occurrences** in Settings) turns off the word marks; a language server's highlights stay.
+
+### Code lens
+
+An extension that knows the code can put a row of small titles above a line: how many references a
+function has, a Run or Debug action over a test or a `main`. A click on a title runs it; the
+pointer resting on one shows its tip. The rows are not part of the text: the cursor steps over
+them, and the text you are looking at does not jump when they appear. `code_lens = false` under
+`[editor]` (**Code lens** in Settings) turns them off.
+
+### Semantic highlighting
+
+An extension that knows the code (a language server, through the lsp extension) can color it by
+meaning: a name is drawn as the type, function, variable, constant or macro it is, beyond what the
+syntax highlighting sees, deprecated names are struck through, and the extension may underline
+others (rust-analyzer's mutable variables). The colors are the theme's syntax colors. Until the
+extension has answered, and while you type, the syntax colors and the last answer's colors are
+shown. `semantic_highlighting = false` under `[editor]` (**Semantic highlighting** in Settings)
+turns it off.
 
 ### Vim mode
 
@@ -617,6 +738,10 @@ fold's pill and other virtual text, `ghost` for inline completion, `codelens` fo
 `info` and `hint` for those diagnostics. A theme that leaves them out gets them from its other
 colors.
 
+File icons can come from an extension's icon theme: **Select File Icon Theme** in the command
+palette previews each one in the explorer and saves the choice as `file_icons` in `[ui]` (`rhun`,
+the built-in icons; `none`; or a theme's `OWNER/NAME/THEME`).
+
 The explorer's file icons use ten colors: `icon_red`, `icon_orange`, `icon_yellow`, `icon_green`, `icon_blue`, `icon_purple`, `icon_pink`, `icon_cyan`, `icon_grey` and `icon_white`. Those not given come from the terminal colors (orange and pink as mixes; blue, purple and cyan only when the theme gives them, as the derived ones are syntax colors, and a fixed blue, purple and cyan otherwise), muted text and panel text; a derived color is moved toward the text until it stands out on the panel by at least 3:1.
 
 On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the theme Omarchy has set and switches with it. It is the default there, for both modes, until you pick another theme. For an Omarchy theme rhun has no match for, add a rhun theme with the same name; otherwise rhun's own dark or light theme is used.
@@ -657,6 +782,29 @@ case = insensitive
 `icon` gives the explorer's icon for the grammar's files: an icon from `assets/icons/files/` (without `.svg`, such as `rust` or `config`; `code` for a language with none) and a color, one of red orange yellow green blue purple pink cyan grey white (grey if left out). Without it the files get the default icon.
 
 `prefix` lists characters that start a colored word, each followed by a letter: `v` variable, `a` attribute, `t` tag, `p` preproc (at the start of a line only). A file gets the grammar whose `files` fit its name best: an exact name first, then the longest `*.suffix`; your grammars win a tie. Only when no pattern fits does rhun look for a `first_line` word in the file's first line; the longest one found wins.
+
+A grammar also says how the language is typed: auto-closing and surrounding pairs, the tokens
+that indent the next line and outdent their own, continued lists and comments, doc comment blocks
+and folding markers. Without these keys the editor behaves as it always did.
+
+```ini
+autoclose = ( ) [ ] { } " " {% %}
+autoclose_code = "
+indent_open = begin ^when ($
+indent_close = end )
+indent_middle = else
+indent_dedent_after = return
+continue = ;;
+doc_block = /** * */
+fold_markers = #region #endregion
+```
+
+`^T` counts T only as a line's first code token and `T$` only as its last; strings and comments
+never count. Enter indents one level after a line with more openers than closers and one level
+less after a dedent word; typing a closing or middle token on a line Enter indented takes it one
+level back. The full list of keys and rules is in the extension spec (docs/extensions/v1.1.md,
+"Language configuration"); an extension can set the same keys for an existing language in
+`[language.NAME]`.
 
 ## Scripting
 
@@ -714,11 +862,39 @@ commands:
 | Key | Command | What happens |
 | --- | --- | --- |
 | F12 | Go to Definition | one definition opens at once; several are listed in the palette |
-| shift+F12 | Find All References | the references in the palette, this file's first; choosing one opens it |
+| ctrl+F12 | Go to Implementation | the same for implementations (Go to Declaration and Go to Type Definition are in the palette) |
+| alt+F12 | Peek Definition | the definitions in a box under the cursor's line, without leaving it (also Peek References, Implementation, Declaration, Type Definition) |
+| shift+F12 | Find All References | the references in the **Results** panel tab, grouped by file |
+| F4, shift+F4 | Next/Previous Result | open the next or previous location of the Results tab |
+| shift+alt+h | Show Call Hierarchy | the callers of the function at the cursor in the Results tab (Show Type Hierarchy alike) |
+| ctrl+i | Show Hover | the hover card at the cursor; again, to scroll it with the keyboard |
 | ctrl+r | Go to Symbol in File | the file's functions, types and variables, indented by nesting; type to filter |
+| ctrl+t | Go to Symbol in Project | symbols of the whole project as you type (also `#` first in Go to File) |
+| shift+alt+Right, shift+alt+Left | Expand/Shrink Selection | each selection grows to the enclosing expression, statement, block…; shrink goes back |
+| F8, shift+F8 | Next/Previous Problem | the next problem in the file, with its message in the hover card |
+| ctrl+click | | on a link (an `#include`, a URL in a comment) opens it; on other text goes to the definition (cmd+click on macOS; alt+click when ctrl adds carets) |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
-| F2 | Rename | on a word, asks for the new name, then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
-| shift+alt+f | Format Document | with the document's tab width and spaces |
+| shift+alt+. | Auto Fix | applies the preferred quick fix at the cursor, else lists the quick fixes |
+| shift+alt+o | Organize Imports | applied at once when the extension offers exactly one |
+| ctrl+shift+r | Refactor... | the refactorings at the cursor (Source Action... and Fix All are in the palette) |
+| F2 | Rename | on a word, asks for the new name (filled with what the extension says can be renamed there), then renames it in every file (see [Edits across files](#edits-across-files); without a matching rename provider, F2 renames the file) |
+| shift+alt+f | Format Document | with the document's tab width and spaces; with a selection, Format Selection when the extension can |
+
+When the pointer rests on a word, extensions that support it show a **hover card**: the problems
+there first, then what each extension says, wrapped to the card's width; move the pointer onto
+the card to scroll it. A **lightbulb** in the gutter marks a line with a problem that has a quick
+fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
+references, hierarchies and Find in Files results (`ctrl+Enter` in Find in Files moves its list
+there; the arrows on its title go back and forth, the cross drops one). While extensions are
+still searching its title shows their progress, and **Cancel Language Query** stops them and
+keeps what came;
+Enter opens a location, Space opens it and stays in the tab, Escape goes back to the editor. In a
+call hierarchy, expanding a row asks for that function's callers; the arrow button switches to
+the functions it calls. The **Outline** section of the sidebar (**Focus Outline**) lists the
+active file's symbols, follows the cursor, and Enter goes to one. In the peek box, Up/Down choose
+a location, Enter opens it, Escape closes it, and typing goes on in the editor. `[editor]
+lightbulb = no` turns the lightbulb off; `format_on_type` and `format_on_paste` (both off by
+default) let the formatter tidy lines as you type or paste.
 
 Extensions can also fill **trees and logs** that rhun draws and keeps: sections in the sidebar
 under the Explorer (click a header to fold it), tabs in the bottom panel after the terminals
@@ -744,6 +920,14 @@ so a folder opened from a `rhun://` link stays paused for them too until you tru
 extension can also give the base the gutter marks compare a file with, for files outside git
 (another version control system, or "compare with" modes), and write commit messages (see
 Commit message AI).
+
+An extension for another version control system (the first-party Mercurial extension, for
+example) adds its own section to the sidebar: a status line such as the branch, a message box
+with its buttons (Ctrl+Enter in the box runs the first, usually Commit), and its changed files in
+groups. Click a file to see its changes in a diff tab (against what the extension says the file
+was); hover a file or a group for its action buttons, or right-click it for all its actions and
+Open File. Other extensions may add buttons to the section's header. Its files and their folders are colored in the explorer and the tab titles as
+git's are, and the gutter marks of its files compare with what it says they were.
 
 An edit across files is checked whole before anything changes: if a document changed meanwhile
 or a range is off, nothing changes and rhun says why. Each document's changes are one undo
@@ -1005,7 +1189,9 @@ version." first. An update that asks for more access than the installed version 
 for your files or project, home, the network, the terminal, or a new program to run) always asks,
 naming what is new, and waits for you; Cancel keeps the installed version and stops automatic
 updates from fetching that version again. After **Roll back**, automatic updates leave the
-version you went back from alone until a newer one appears. What rhun learned is kept in
+version you went back from alone until a newer one appears. A reviewed version that needs a newer
+rhun (the index's `rhun` key) is neither offered nor installed; the Extensions page says which rhun
+it needs. Extensions installed from a folder, a link or an archive are never offered updates. What rhun learned is kept in
 `$XDG_STATE_HOME/rhun/extension-updates`.
 
 #### Browse
@@ -1079,11 +1265,19 @@ section's buttons run all tests, run them with coverage, run the failed ones aga
 `r` runs the selected test, `d` debugs it, and its menu also goes to the test or its failure,
 opens the expected and actual values as a diff tab and shows its output. Under the tree the
 selected test's last result: its message, the expected and actual values as a colored line diff,
-and the end of its output.
+and the end of its output. The field above the tree filters it (ctrl+f): each word starts a word of
+a test's name ("add" finds TestAdd); the button beside it shows only failed tests. After a coverage
+run a **Coverage** section lists the files, the least covered first. The status bar counts a run's
+progress, then the passed and failed tests (a click shows Testing).
+
+Debugging a test starts the extension's own debugger on it in rhun's debugger (`rhun-editor/tests`:
+Delve for Go, lldb-dap for Rust): breakpoints, stepping and the Debug Console work as for any
+session, and when the session ends the program's exit status is the test's result.
 
 In the editor each test has a run button in the gutter at its first line (`[testing] gutter =
 false` hides them): a click runs it, a right click opens its menu, and after a run the button
-shows the result. A failure with a place is a problem (the Problems tab, a mark in the file with
+shows the result. Buttons, failure marks and coverage follow your edits until the extension lists
+the file's tests again. A failure with a place is a problem (the Problems tab, a mark in the file with
 the expected and actual values on hover) until the test passes. After a run with coverage the line
 numbers are tinted: covered green, missed red, partly covered yellow (Show Test Coverage toggles
 them).
@@ -1126,6 +1320,91 @@ Errors and warnings a task prints (Go, gcc and clang, rustc and cargo, TypeScrip
 task's own patterns) become **problems**: marks in the files (the status bar counts them) and the
 **Problems** tab of the panel (ctrl+shift+m), files first, then each problem. Enter or a click goes
 to it. A task's problems are replaced when it runs again; Clear Task Problems removes them.
+### Debugging
+
+rhun debugs programs through the Debug Adapter Protocol: an extension declares the debuggers
+(`rhun-editor/debug`: Go with Delve, Python with debugpy, C and C++ with lldb-dap) and rhun talks
+to them itself. The first time an extension's debugger starts in a project, rhun asks once
+("Let Debug run programs in proj?", the exact command shown); the adapter then runs as you, outside
+any sandbox. Forget on the extension's page asks again.
+
+**Launch configurations** live in `PROJECT/.rhun/launch.ini`, one section per configuration
+(Open Launch Configurations creates the file; **Add Configuration** appends one of the installed
+debuggers' templates; **Select Configuration** picks the one F5 starts):
+
+```ini
+[Run server]
+type = go
+mode = debug
+program = ${project}/cmd/server
+args = --port 8080
+env.LOG_LEVEL = debug
+before = build
+
+[Python file]
+type = python
+program = ${file}
+console = integratedTerminal
+
+[Attach to a running Delve]
+type = go
+request = attach
+mode = remote
+server = 127.0.0.1:2345
+```
+
+- `type` picks the debugger and `request` is `launch` (the default) or `attach`. Every other key is
+  a launch argument, typed as the debugger declares it (`list` keys split into words and repeat;
+  `KEY.NAME = value` builds objects; a numeric segment such as `args.0` is an array index).
+- Variables: `${project}`, `${projectName}`, `${file}`, `${fileDir}`, `${fileName}`,
+  `${fileStem}`, `${fileExt}`, `${relativeFile}`, `${line}`, `${column}`, `${selection}`,
+  `${home}`, `${env:NAME}`, and `$$` for a dollar sign. Questions asked at each launch:
+  `${ask:Port}` (text), `${pick:Mode|debug|test}` (a list) and `${process}` (the running
+  processes, giving the chosen one's id); the same question in one configuration is asked once,
+  and Escape abandons the launch.
+- `before = TASK` runs a task (Run Task's tasks, by label or id) and launches once it succeeds; if
+  it fails, rhun asks whether to debug anyway. `after = TASK` runs one when the session ends.
+- `compound = A | B` starts those configurations in turn (each one after the previous one's
+  questions are answered).
+- `server = HOST:PORT` connects to an adapter that already listens (HOST `localhost` or an IPv4
+  address) and starts nothing.
+- A debugger can prepare the configuration first (Delve's "Test at cursor" finds the test the cursor
+  is in; debugpy picks the project's `.venv`): the console says "Preparing the launch", and Stop
+  cancels it.
+
+**Keys** (F5 and friends, as in other editors): F5 Start or Continue, Ctrl+F5 Run without
+debugging, Shift+F5 Stop, Ctrl+Shift+F5 Restart, F6 Pause, F10 Step Over, F11 Step Into,
+Shift+F11 Step Out, F9 Toggle Breakpoint, Ctrl+Shift+Y the debug view. While a session runs they
+also work from the terminal (`[debug] keys_in_terminal`).
+
+**While debugging**, the title bar holds the toolbar (Continue or Pause, Step Over, Into, Out,
+Restart, Stop); the sidebar shows Variables, Watch, Call Stack and Breakpoints, and the panel the
+Debug Console, where an expression evaluates in the selected frame (Up and Down recall earlier
+ones). Call Stack lists the program's threads with the stopped one open; choosing another thread
+shows its frames, and Continue and the steps then act on it. Long arrays open in ranges of 100 (`[0..99]`, nested for bigger ones), F2 on a variable sets
+its value, and values that changed since the last stop are highlighted. An adapter may start child
+sessions of its own (startDebugging); they end with their parent. The paused line is marked in the gutter, and resting the pointer on a name shows its value.
+Program output, the adapter's messages and rhun's notes ("Program exited with code 3") go to the
+console. A program the adapter starts "in the terminal" (debugpy's `console =
+integratedTerminal`) gets a terminal tab of its own, where you type its input.
+
+**Breakpoints**: click the gutter's left lane or press F9; a right click adds a conditional
+breakpoint (an expression), a hit count or a logpoint (a message with `{expressions}`), and
+disables or removes one. Breakpoints follow edits, are kept per project, and show hollow until the
+debugger confirms them. The Breakpoints section also lists function breakpoints and exception
+filters (such as Python's "Uncaught Exceptions").
+
+**Settings** (`[debug]`): `show_on_start` opens the debug view when a session starts,
+`keys_in_terminal` as above, `console_lines` the lines the console keeps (10000).
+
+| Debugger | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
+| Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
+| debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
+(feature `debug`, docs/extensions/v1.1.md "Debuggers").
 
 ### Write your own
 

@@ -350,6 +350,8 @@ handle_line:
     mov rdi, rbx
     call hello_features         # the features it named that rhun knows, said back before ready
     mov rdi, rbx
+    call extproto_send_folders  # resources group: workspace-folders, before ready
+    mov rdi, rbx
     call send_ready
     mov rdi, rbx
     call send_settings          # its own settings, before anything else
@@ -565,12 +567,28 @@ handle_line:
     call nb_reply
     test eax, eax
     jnz 9f
+    mov rdi, rbx                # debugger: debug-resolve (debugext.s)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call dbgx_reply
+    test eax, eax
+    jnz 9f
     mov rdi, rbx                # editor presentation: folding ranges, tokens, hints ... (present.s)
     mov rsi, r12
     mov edx, 1
     mov rcx, [rip + body_ptr]
     mov r8, [rip + body_len]
     call present_reply
+    test eax, eax
+    jnz 9f
+    mov rdi, rbx                # custom editors (ceproto.inc)
+    mov rsi, r12
+    mov edx, 1
+    mov rcx, [rip + body_ptr]
+    mov r8, [rip + body_len]
+    call ce_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -712,6 +730,26 @@ handle_line:
     mov rsi, r12
     xor edx, edx
     call nb_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # debugger: debug-resolve's code and text (debugext.s)
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call dbgx_reply
+    test eax, eax
+    jnz 9f
+    mov edi, 2                  # custom editors, with the code and text
+    call rest_from
+    mov rcx, rax
+    mov r8, rdx
+    mov rdi, rbx
+    mov rsi, r12
+    xor edx, edx
+    call ce_reply
     test eax, eax
     jnz 9f
     mov rdi, rbx
@@ -1021,8 +1059,13 @@ doc_by_id:
     cmp [rax + DOC_id], rdi
     jne 1b
     ret
-8:  xor eax, eax
-    ret
+8:  push rdi                    # notebooks (A3): a cell, which has no tab
+    call nb_cell_doc_by_id
+    pop rdi
+    test rax, rax
+    jnz 9f
+    jmp ce_doc_by_id            # custom editors: a text model's document, in a view's tab
+9:  ret
 
 # arg_doc(i) -> DOC* from field i, or 0 after replying nodoc
 arg_doc:
@@ -2470,6 +2513,11 @@ prompt_busy:
     pop rcx
     test eax, eax
     jnz 1f
+    push rax
+    call quick_is_open          # an extension's quick input (quick.s)
+    pop rcx
+    test eax, eax
+    jnz 1f
     xor eax, eax
     ret
 1:  mov rdi, [rip + cur_id]
@@ -2998,6 +3046,8 @@ h_notify_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     mov rdx, [rip + body_ptr]
@@ -3031,6 +3081,8 @@ h_unnotify:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call notify_close_request
@@ -3108,6 +3160,8 @@ h_progress_set:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov r12, rax
     mov r13, -1
     mov edi, 3
@@ -3154,6 +3208,8 @@ h_progress_end:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call progress_end_request
@@ -3200,6 +3256,116 @@ h_vimage:
 9:  EPILOGUE
 
 # ID unimage IMG -> ok ID
+# ID quick LEN + step body -> ok ID Q: an extension's quick input (quick.s); busy while one, the
+#   palette or a prompt shows
+h_quick:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    cmp qword ptr [rip + pr_id], 0
+    jne 5f
+    mov rdi, [rip + cur]
+    mov rsi, [rip + body_ptr]
+    mov rdx, [rip + body_len]
+    call quick_open
+    cmp rax, -1
+    je 7f
+    cmp rax, -2
+    je 6f
+    cmp rax, -3
+    je 5f
+    mov rdi, [rip + cur_id]
+    mov rsi, rax
+    call reply_ok_u64
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_busy]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_quick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID quick-set Q LEN + step body -> ok ID: what the records name changes (no such session: noview)
+h_quick_set:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 4
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 0x7fffffff
+    ja 5f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    mov rdx, [rip + body_ptr]
+    mov rcx, [rip + body_len]
+    call quick_set
+    cmp eax, 1
+    je 5f
+    cmp eax, 2
+    je 7f
+    cmp eax, 3
+    je 6f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noquick]
+    call reply_error
+    EPILOGUE
+6:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_toobig_quick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
+# ID quick-close Q -> ok ID: it closes without a hide event
+h_quick_close:
+    PROLOGUE
+    mov edi, FEAT_QUICK_INPUT
+    call feat_or_unknown
+    test eax, eax
+    jz 9f
+    cmp qword ptr [rip + nfields], 3
+    jne 7f
+    mov edi, 2
+    call field_u64
+    test edx, edx
+    jz 7f
+    cmp rax, 0x7fffffff
+    ja 5f
+    mov rdi, [rip + cur]
+    mov esi, eax
+    call quick_close
+    test eax, eax
+    jnz 5f
+    mov rdi, [rip + cur_id]
+    call reply_ok
+    EPILOGUE
+5:  mov rdi, [rip + cur_id]
+    lea rsi, [rip + .Le_noquick]
+    call reply_error
+    EPILOGUE
+7:  mov rdi, [rip + cur_id]
+    call reply_syntax
+9:  EPILOGUE
+
 h_unimage:
     PROLOGUE
     mov edi, FEAT_VIEW_IMAGES
@@ -3212,6 +3378,8 @@ h_unimage:
     call field_u64
     test edx, edx
     jz 7f
+    cmp rax, 0x7fffffff          # past an id rhun gives: no such one
+    ja 6f
     mov rdi, [rip + cur]
     mov esi, eax
     call viewimg_unimage
@@ -3750,6 +3918,7 @@ FN extproto_doc
 
 # FN extproto_matches(patterns, doc) -> eax 1 when the document's name matches the patterns
 FN extproto_matches
+    xor edx, edx                # the recipient is not known here
     jmp sub_matches
 
 # FN extproto_host_request(ext, verb, doc, kind, ch) -> rax the id of "ID VERB DOC VERSION LINE COL
@@ -3934,6 +4103,17 @@ FN extproto_host_send_body
     call out_end
     test rax, rax
     js 8f
+    xor ecx, ecx                # resources group: the request's kind (its verb) and time
+1:  cmp rcx, r14
+    jae 2f
+    cmp byte ptr [r13 + rcx], ' '
+    je 2f
+    inc rcx
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r15
+    mov rdx, r13
+    call extres_req_sent
     mov rax, r15
     EPILOGUE
 8:  xor eax, eax
@@ -4176,6 +4356,8 @@ FN extproto_send_invoke
     mov r13, [rax + CMD_name]
     test r13, r13
     jz .Lpsr_missing
+    mov rdi, r12                # debugger: a debug-start may follow this command (debugext.s)
+    call dbgx_note_command
     mov [rip + cur], r12
     call out_begin
     lea rdi, [rip + .Lev_run]
@@ -4249,7 +4431,7 @@ active_doc_id:
     imul rax, rdi, TAB_SIZE
     add rax, [rip + g_tabs + VEC_ptr]
     cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 8f
+    jne 7f
     mov rax, [rax + TAB_doc]
     test rax, rax
     jz 8f
@@ -4260,6 +4442,13 @@ active_doc_id:
     jnz 8f
 1:  mov rax, [rax + DOC_id]
     ret
+7:  cmp qword ptr [rax + TAB_kind], TAB_NOTEBOOK
+    jne 8f
+    mov rax, [rip + cur]        # notebooks (A3): the selected cell, for one that agreed notebooks
+    test rax, rax
+    jz 8f
+    FEAT_TEST rax, FEAT_NOTEBOOKS
+    jnz nb_active_cell_id
 8:  xor eax, eax
     ret
 
@@ -4283,14 +4472,17 @@ known_find:
 8:  xor eax, eax
     ret
 
-# sub_matches(patterns cstr or 0, doc) -> 1 when the document's name matches ("*" matches all,
-# untitled documents too)
+# sub_matches(patterns cstr or 0, doc, recipient ext or 0) -> 1 when the document's name matches
+# ("*" matches all, untitled documents too); a virtual document only for a recipient that agreed uris
 sub_matches:
     PROLOGUE
     test rdi, rdi
     jz 8f
     mov rbx, rdi
     mov r12, rsi
+    mov r13, rdx
+    test dword ptr [r12 + DOC_flags], DF_CELL
+    jnz 4f
     cmp qword ptr [r12 + DOC_uri], 0
     jne 2f
     cmp byte ptr [rbx], '*'
@@ -4305,13 +4497,16 @@ sub_matches:
     call ext_path_matches
     EPILOGUE
 2:  # resources group: a virtual document, only for extensions that agreed uris, by its URI's
-    # last segment
-    mov rdi, [rip + cur]
+    # last segment (with the recipient unknown, its request about the document is refused later:
+    # extproto_host_request asks only about documents the extension was told of)
+    test r13, r13
+    jz 21f
+    mov rdi, r13
     mov esi, FEAT_URIS
     call ext_feature
     test eax, eax
     jz 8f
-    cmp byte ptr [rbx], '*'
+21: cmp byte ptr [rbx], '*'
     jne 3f
     cmp byte ptr [rbx + 1], 0
     je 9f
@@ -4320,6 +4515,23 @@ sub_matches:
     mov rdi, rax
     mov rsi, rbx
     call ext_path_matches
+    EPILOGUE
+4:  # notebooks (A3): a cell, only for extensions that agreed notebooks, by its language's file name
+    mov rdi, r13                # the recipient when the caller names it (resources group)
+    test rdi, rdi
+    jnz 41f
+    mov rdi, [rip + cur]
+41: mov esi, FEAT_NOTEBOOKS
+    call ext_feature
+    test eax, eax
+    jz 8f
+    cmp byte ptr [rbx], '*'
+    jne 5f
+    cmp byte ptr [rbx + 1], 0
+    je 9f
+5:  mov rdi, rbx
+    mov rsi, r12
+    call nb_cell_match
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -4514,9 +4726,15 @@ FN extproto_send_hover_all
     jne 1b
     mov rdi, [rbx + EXT_sub_hover]
     mov rsi, r13
+    mov rdx, rbx
     call sub_matches
     test eax, eax
     jz 1b
+    mov rdi, rbx                # language features: hover-query instead (hovercard.s)
+    mov rsi, r13
+    call hovercard_asks
+    test eax, eax
+    jnz 1b
     mov [rip + cur], rbx
     call out_begin
     lea rdi, [rip + .Lev_hover]
@@ -5163,6 +5381,9 @@ verbs:
     .quad .Lv_progress_end, h_progress_end, 0
     .quad .Lv_vimage, h_vimage, 8388608         # view-images (viewpic.s)
     .quad .Lv_unimage, h_unimage, 0
+    .quad .Lv_quick, h_quick, 2097152           # quick input (quick.s)
+    .quad .Lv_quick_set, h_quick_set, 2097152
+    .quad .Lv_quick_close, h_quick_close, 0
     .quad .Lv_apply, h_apply, EXT_BODY_MAX
     .quad .Lv_save_apply, h_save_apply, EXT_BODY_MAX
     # language features (query.s)
@@ -5184,6 +5405,10 @@ verbs:
     .quad .Lv_git_show, gitdata_h_show, 4096
     .quad .Lv_git_diff_open, gitdata_h_diff_open, 4096
     .quad .Lv_qd_refresh, scmext_h_qd_refresh, 4096
+    .quad .Lv_scm_register, scmext_h_register, 8192
+    .quad .Lv_scm_update, scmext_h_update, EXT_BODY_MAX
+    .quad .Lv_scm_input, scmext_h_input, 0
+    .quad .Lv_scm_input_set, scmext_h_input_set, 65536
     # resources group (extresproto.inc)
     .quad .Lres_v_busy, h_res_busy, 0
     .quad .Lres_v_secret_get, h_res_secret_get, 0
@@ -5197,6 +5422,7 @@ verbs:
     .quad .Lres_v_find_files, h_res_find_files, 65536
     .quad .Lres_v_search_text, h_res_search_text, 340000
     .quad .Lres_v_setting_get, h_res_setting_get, 0
+    .quad .Lres_v_folder_of, h_res_folder_of, 0
     # testing (testproto.s): feature "tests"
     .quad .Lv_test_items, h_tests, EXT_BODY_MAX
     .quad .Lv_test_remove, h_tests, EXT_BODY_MAX
@@ -5212,6 +5438,9 @@ verbs:
     .quad .Lv_tools, h_tools, 0
     .quad .Lv_tool_call, h_tool_call, EXT_BODY_MAX
     .quad .Lv_agent_ask, h_agent_ask, 8192
+    # debugger (debugext.s): feature "debug"
+    .quad dbgx_v_debug_start, dbgx_h_debug_start, DBGX_BODY_MAX
+    .quad dbgx_v_debug_stop, dbgx_h_debug_stop, 0
     # notebooks (nbproto.inc)
     .quad .Lnb_v_state, h_nb_state, 0
     .quad .Lnb_v_output, h_nb_output, NB_OUTPUT_MAX
@@ -5230,9 +5459,13 @@ verbs:
     .quad .Lv_tasks_set, h_terminals, 1048576
     .quad .Lv_task_start, h_terminals, 0
     .quad .Lv_task_run, h_terminals, 131072
+    # custom editors (ceproto.inc)
+    .quad .Lce_v_read, h_ed_read, 0
+    .quad .Lce_v_dirty, h_ed_dirty, 0
     # editor presentation (deco.s)
     .quad .Lpv_decoration_type, h_decoration_type, DTY_BODY_MAX
     .quad .Lpv_decorate, h_decorate, DECO_BODY_MAX
+    .quad .Lpv_semantic_legend, h_semantic_legend, SEMT_LEGEND_MAX     # (semtok.s)
     .quad 0, 0, 0
 .Lv_query_part: .asciz "query-part"
 .Lv_query_progress: .asciz "query-progress"
@@ -5256,6 +5489,7 @@ verbs:
 .Lv_test_coverage: .asciz "test-coverage"
 .Lv_test_exec: .asciz "test-exec"
 .Lpv_decoration_type: .asciz "decoration-type"
+.Lpv_semantic_legend: .asciz "semantic-legend"
 .Lpv_decorate: .asciz "decorate"
 .Lv_set_context: .asciz "set-context"
 .Lv_run_command: .asciz "run-command"
@@ -5271,6 +5505,10 @@ verbs:
 .Lv_git_show: .asciz "git-show"
 .Lv_git_diff_open: .asciz "git-diff-open"
 .Lv_qd_refresh: .asciz "quickdiff-refresh"
+.Lv_scm_register: .asciz "scm-register"
+.Lv_scm_update: .asciz "scm-update"
+.Lv_scm_input: .asciz "scm-input"
+.Lv_scm_input_set: .asciz "scm-input-set"
 .Lv_register: .asciz "register"
 .Lv_unregister: .asciz "unregister"
 .Le_refused_unregister: .asciz "refused not a runtime command of this extension"
@@ -5322,6 +5560,11 @@ verbs:
 .Lo_no: .asciz "no"
 .Lo_dash: .asciz "-"
 .Le_busy: .asciz "busy a prompt is open"
+.Le_toobig_quick: .asciz "toobig 10000 items, 2 MB, 8 buttons, 4 item buttons"
+.Le_noquick: .asciz "noview no such quick input"
+.Lv_quick: .asciz "quick"
+.Lv_quick_set: .asciz "quick-set"
+.Lv_quick_close: .asciz "quick-close"
 .Le_cancelled: .asciz "cancelled"
 .Le_refused_cmd: .asciz "refused not a command an extension may run"
 .Le_refused_name: .asciz "refused the name is in use"
@@ -5487,6 +5730,7 @@ FN extproto_answer_syntax
 .include "app/extresproto.inc"    # resources group: idle, secrets, urls, uris, files, folders
 .include "app/extaiproto.inc"
 .include "app/nbproto.inc"
+.include "app/ceproto.inc"
 .section .rodata
 .Lewp_watch_verb: .asciz "watch-workspace"
 .Lewp_unwatch_verb: .asciz "unwatch-workspace"

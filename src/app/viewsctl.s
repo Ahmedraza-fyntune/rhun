@@ -1,7 +1,8 @@
 # the views group's --script / --control commands (control.s dispatches here), and a built-in demo
 # of the place and tree APIs that the tests drive:
 #   print-sidebar | print-panel-tabs | print-side-tabs   the places' items (place_dump)
-#   print-view NAME|VIEW      a retained view's tree rows (or a built-in item's tree: places-demo)
+#   print-view NAME|VIEW      a retained view's tree rows (or a built-in item's tree: places-demo);
+#                             a table's columns line first
 #   view-show NAME            a place item (its name, or a declared view's key) shown, with the keyboard
 #   view-focus NAME           the keyboard to it
 #   places-demo               a built-in sidebar section and panel tab filled with tree_kid
@@ -43,6 +44,27 @@ c_print_log:
     mov eax, 7
     jmp c_views
 
+# print-form NAME|VIEW: a form view's fields (form_dump)
+c_print_form:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call views_flush
+    mov rdi, r12
+    mov rsi, r13
+    call rview_form_of
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rbx
+    call form_dump
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lnone]
+    call sb_push_cstr
+    EPILOGUE
+
 # print-notes: the notification cards and the progress entries (notify_dump)
 c_print_notes:
     PROLOGUE
@@ -50,6 +72,36 @@ c_print_notes:
     call views_flush
     mov rdi, rbx
     call notify_dump
+    EPILOGUE
+
+# print-docview NAME|VIEW: a doc view's scroll, height, follow and link focus, then its layout (mdview_dump)
+c_print_doc:
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, rdx
+    call views_flush
+    mov rdi, r12
+    mov rsi, r13
+    call rview_doc_of
+    test rax, rax
+    jz 8f
+    mov rdi, rax
+    mov rsi, rbx
+    call mdview_dump
+    EPILOGUE
+8:  mov rdi, rbx
+    lea rsi, [rip + .Lnone]
+    call sb_push_cstr
+    EPILOGUE
+
+# print-quick: the quick input shown (quick_dump), or "quick none"
+c_print_quick:
+    PROLOGUE
+    mov rbx, rdi
+    call views_flush
+    mov rdi, rbx
+    call quick_dump
     EPILOGUE
 
 # note-press N B: card N among those shown (0 the oldest) has button B (1-3), close or cancel pressed
@@ -224,6 +276,9 @@ FN views_control
     mov rdi, rbx
     mov esi, 10
     call sb_push_byte
+    mov rdi, r15                # a table's columns
+    mov rsi, rbx
+    call table_dump
     mov rdi, r15
     mov rsi, rbx
     call tree_dump
@@ -489,6 +544,7 @@ views_ctl:
     .quad .Lc_print_side_tabs, c_print_side_tabs, .Lc_print_view, c_print_view
     .quad .Lc_view_show, c_view_show, .Lc_view_focus, c_view_focus, .Lc_places_demo, c_places_demo
     .quad .Lc_print_log, c_print_log, .Lc_print_notes, c_print_notes, .Lc_note_press, c_note_press
+    .quad .Lc_print_form, c_print_form, .Lc_print_quick, c_print_quick, .Lc_print_doc, c_print_doc
     .quad 0, 0
 .Lc_print_sidebar: .asciz "print-sidebar"
 .Lc_print_panel_tabs: .asciz "print-panel-tabs"
@@ -499,6 +555,9 @@ views_ctl:
 .Lc_places_demo: .asciz "places-demo"
 .Lc_print_log: .asciz "print-log"
 .Lc_print_notes: .asciz "print-notes"
+.Lc_print_form: .asciz "print-form"
+.Lc_print_quick: .asciz "print-quick"
+.Lc_print_doc: .asciz "print-docview"
 .Lc_note_press: .asciz "note-press"
 .Lw_close: .asciz "close"
 .Lw_cancel: .asciz "cancel"

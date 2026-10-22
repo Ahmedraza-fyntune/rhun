@@ -44,21 +44,21 @@ win_systable:
     .quad ws_nosys # 38
     .quad ws_pid # 39
     .quad ws_nosys # 40
-    .quad ws_nosys # 41
-    .quad ws_nosys # 42
-    .quad ws_nosys # 43
+    .quad ws_socket # 41
+    .quad ws_connect # 42
+    .quad ws_accept # 43
     .quad ws_nosys # 44
     .quad ws_nosys # 45
     .quad ws_nosys # 46
     .quad ws_nosys # 47
-    .quad ws_nosys # 48
-    .quad ws_nosys # 49
-    .quad ws_nosys # 50
-    .quad ws_nosys # 51
-    .quad ws_nosys # 52
-    .quad ws_nosys # 53
-    .quad ws_nosys # 54
-    .quad ws_nosys # 55
+    .quad ws_sock_shutdown # 48
+    .quad ws_bind # 49
+    .quad ws_listen # 50
+    .quad ws_getsockname # 51
+    .quad ws_getpeername # 52
+    .quad ws_socketpair # 53
+    .quad ws_setsockopt # 54
+    .quad ws_getsockopt # 55
     .quad ws_nosys # 56
     .quad ws_nosys # 57
     .quad ws_nosys # 58
@@ -291,7 +291,7 @@ win_systable:
     .quad ws_nosys # 285
     .quad ws_nosys # 286
     .quad ws_nosys # 287
-    .quad ws_nosys # 288
+    .quad ws_accept4 # 288
     .quad ws_nosys # 289
     .quad ws_nosys # 290
     .quad ws_nosys # 291

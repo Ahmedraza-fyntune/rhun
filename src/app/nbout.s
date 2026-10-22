@@ -578,6 +578,10 @@ FN nb_ou_height
     add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
     mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_RICH
+    je .Loh_rich
+    cmp eax, NBIT_PICTURE
+    je .Loh_pic
     cmp eax, NBIT_ANSI
     ja .Loh_image
     mov edi, r12d
@@ -592,6 +596,21 @@ FN nb_ou_height
     call nb_tx_walk
     add eax, edx                # "N more lines"
     imul eax, [rip + g_lh]
+    jmp .Loh_pad
+.Loh_rich:                      # a rich document, laid out at the column's width (nbmd.s)
+    mov rdi, [rbx + NBO_md]
+    mov esi, r12d
+    sub esi, [rip + g_mt + 4*MI_8]
+    sub esi, [rip + g_mt + 4*MI_8]
+    call md_layout
+    jmp .Loh_pad
+.Loh_pic:                       # a picture, scaled down to the column (nbmd.s)
+    mov rdi, r13
+    mov esi, r12d
+    sub esi, [rip + g_mt + 4*MI_8]
+    sub esi, [rip + g_mt + 4*MI_8]
+    call nb_pic_size
+    mov eax, edx
     jmp .Loh_pad
 .Loh_image:
     mov rdi, rbx
@@ -662,9 +681,10 @@ FN nb_ou_image
     jnz 32f
     mov ecx, [rsp + IMG_h]      # a width alone keeps the image's proportions
     imul ecx, eax
+    mov eax, ecx
     xor edx, edx
     div dword ptr [rsp + IMG_w]
-    xchg eax, ecx
+    mov ecx, eax
     mov eax, [r13 + NBI_w]
 32: mov [rsp + 24], ecx
     mov edi, eax
@@ -879,6 +899,10 @@ FN nb_ou_draw
     add rax, [rbx + NBO_items + VEC_ptr]
     mov r13, rax
     mov eax, [r13 + NBI_type]
+    cmp eax, NBIT_RICH
+    je .Lod_rich
+    cmp eax, NBIT_PICTURE
+    je .Lod_pic
     cmp eax, NBIT_ANSI
     ja .Lod_image
     # text
@@ -965,6 +989,32 @@ FN nb_ou_draw
     lea rcx, [rip + .Lopen_tab]
     COLOR r9d, T_ACCENT
     call text_draw
+    jmp 9f
+.Lod_rich:
+    mov rdi, [rbx + NBO_md]
+    mov esi, [rsp]
+    add esi, [rip + g_mt + 4*MI_8]
+    mov edx, [rsp + 4]
+    add edx, [rip + g_mt + 4*MI_4]
+    mov ecx, [rsp + 8]
+    sub ecx, [rip + g_mt + 4*MI_8]
+    sub ecx, [rip + g_mt + 4*MI_8]
+    mov r8d, [rsp + 16]
+    sub r8d, [rip + g_mt + 4*MI_4]
+    sub r8d, [rip + g_mt + 4*MI_4]
+    call nb_md_draw
+    jmp 9f
+.Lod_pic:
+    mov rdi, rbx
+    mov rsi, r13
+    mov edx, [rsp]
+    add edx, [rip + g_mt + 4*MI_8]
+    mov ecx, [rsp + 4]
+    add ecx, [rip + g_mt + 4*MI_4]
+    mov r8d, [rsp + 8]
+    sub r8d, [rip + g_mt + 4*MI_8]
+    sub r8d, [rip + g_mt + 4*MI_8]
+    call nb_pic_draw
     jmp 9f
 .Lod_image:
     mov rdi, rbx

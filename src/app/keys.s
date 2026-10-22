@@ -683,7 +683,23 @@ kb_guard_term:
     jae 8f
     cmp word ptr [rax], 0x3d3d  # "=="
     jne 8f
-    mov eax, 1
+    # and a view's identity: not empty (the text editor's view is ''), not '' or ""
+    lea rdi, [rax + 2]
+    mov rsi, rcx
+    sub rsi, rdi
+    call trim
+    test rdx, rdx
+    jz 8f
+    cmp rdx, 2
+    jne 3f
+    movzx ecx, byte ptr [rax]
+    cmp cl, [rax + 1]
+    jne 3f
+    cmp ecx, 0x27
+    je 8f
+    cmp ecx, '"'
+    je 8f
+3:  mov eax, 1
 9:  EPILOGUE
 8:  xor eax, eax
     EPILOGUE
@@ -1310,7 +1326,7 @@ FN keys_chord_draw
     mov rdi, rax
     mov rcx, [rbx + KB_cmd]
     mov rsi, [rcx + CMD_title]
-    call cstr_copy
+    call kb_copy_tail           # a long title is cut to what keybuf2 holds
 1:  lea rdi, [rip + g_face_small]
     mov esi, [rsp]
     mov edx, [rsp + 4]
@@ -1320,6 +1336,37 @@ FN keys_chord_draw
     call ui_text_c
     EPILOGUE
 9:  ret
+
+# kb_copy_tail(dst in keybuf2, cstr): as much of it as keybuf2 still holds, cut at a character's
+#   start, NUL-ended
+kb_copy_tail:
+    lea rcx, [rip + keybuf2 + 255]
+    xor edx, edx
+    sub rcx, rdi                # room before the NUL
+    jbe 3f
+1:  cmp rdx, rcx
+    jae 2f
+    mov al, [rsi + rdx]
+    test al, al
+    jz 3f
+    mov [rdi + rdx], al
+    inc rdx
+    jmp 1b
+2:  # cut inside a character (the next byte continues it): that character goes
+    mov al, [rsi + rdx]
+    and al, 0xc0
+    cmp al, 0x80
+    jne 3f
+21: test rdx, rdx
+    jz 3f
+    dec rdx
+    mov al, [rdi + rdx]
+    and al, 0xc0
+    cmp al, 0x80
+    je 21b
+3:  mov byte ptr [rdi + rdx], 0
+    lea rax, [rdi + rdx]
+    ret
 
 # ---------------------------------------------------------------- showing bindings
 
@@ -1984,6 +2031,7 @@ g_commands:
     COMMAND quick_open, "Go to File", cmd_quick_open, "ctrl+p ctrl+e"
     COMMAND command_palette, "Command Palette", cmd_command_palette, "ctrl+shift+p F1"
     COMMAND keyboard_shortcuts, "Keyboard Shortcuts", cmd_keyboard_shortcuts, ""
+    COMMAND select_file_icon_theme, "Select File Icon Theme", cmd_select_file_icon_theme, ""
     COMMAND new_file, "New File", cmd_new_file, "ctrl+n"
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_without_formatting, "Save Without Formatting", cmd_save_without_formatting, ""
@@ -2055,6 +2103,9 @@ g_commands:
     COMMAND focus_agents, "Focus Agents Panel", cmd_focus_agents, ""
     COMMAND open_file, "Open File", cmd_open_file, "ctrl+o"
     COMMAND open_folder, "Open Folder", cmd_open_folder, "ctrl+shift+o"
+    COMMAND add_workspace_folder, "Add Folder to Workspace", cmd_add_workspace_folder, ""   # resources: workspace.s
+    COMMAND remove_workspace_folder, "Remove Folder from Workspace", cmd_remove_workspace_folder, ""
+    COMMAND save_workspace_as, "Save Workspace As", cmd_save_workspace_as, ""
     COMMAND new_folder, "New Folder", cmd_new_folder, ""
     COMMAND rename_file, "Rename File", cmd_rename_file, "F2"
     COMMAND delete_file, "Delete File", cmd_delete_file, ""
@@ -2075,10 +2126,34 @@ g_commands:
     COMMAND implementation, "Go to Implementation", cmd_implementation, "ctrl+F12"
     COMMAND format_selection, "Format Selection", cmd_format_selection, ""
     COMMAND quick_fix_auto, "Auto Fix", cmd_quick_fix_auto, "shift+alt+."
+    COMMAND quick_fix, "Quick Fix...", cmd_quick_fix, ""
     COMMAND organize_imports, "Organize Imports", cmd_organize_imports, "shift+alt+o"
     COMMAND fix_all, "Fix All", cmd_fix_all, ""
     COMMAND refactor, "Refactor...", cmd_refactor, "ctrl+shift+r"
     COMMAND source_action, "Source Action...", cmd_source_action, ""
+    COMMAND show_hover, "Show Hover", cmd_show_hover, "ctrl+i"
+    COMMAND workspace_symbols, "Go to Symbol in Project", cmd_workspace_symbols, "ctrl+t"
+    COMMAND open_link, "Open Link", cmd_open_link, ""
+    COMMAND next_problem, "Next Problem", cmd_next_problem, "F8"
+    COMMAND prev_problem, "Previous Problem", cmd_prev_problem, "shift+F8"
+    COMMAND expand_selection, "Expand Selection", cmd_expand_selection, "shift+alt+Right"
+    COMMAND shrink_selection, "Shrink Selection", cmd_shrink_selection, "shift+alt+Left"
+    COMMAND peek_definition, "Peek Definition", cmd_peek_definition, "alt+F12"
+    COMMAND peek_declaration, "Peek Declaration", cmd_peek_declaration, ""
+    COMMAND peek_type_definition, "Peek Type Definition", cmd_peek_type_definition, ""
+    COMMAND peek_implementation, "Peek Implementation", cmd_peek_implementation, ""
+    COMMAND peek_references, "Peek References", cmd_peek_references, ""
+    COMMAND cancel_query, "Cancel Language Query", cmd_cancel_query, ""
+    COMMAND next_result, "Next Result", cmd_next_result, "F4"
+    COMMAND prev_result, "Previous Result", cmd_prev_result, "shift+F4"
+    COMMAND focus_results, "Focus Results", cmd_focus_results, ""
+    COMMAND focus_outline, "Focus Outline", cmd_focus_outline, ""
+    COMMAND results_back, "Results: Previous Set", cmd_results_back, ""
+    COMMAND results_forward, "Results: Next Set", cmd_results_forward, ""
+    COMMAND results_drop, "Results: Clear Set", cmd_results_drop, ""
+    COMMAND results_flip, "Results: Switch Hierarchy Direction", cmd_results_flip, ""
+    COMMAND call_hierarchy, "Show Call Hierarchy", cmd_call_hierarchy, "shift+alt+h"
+    COMMAND type_hierarchy, "Show Type Hierarchy", cmd_type_hierarchy, ""
     COMMAND select_default_formatter, "Select Default Formatter", cmd_select_default_formatter, ""
     COMMAND select_rename_provider, "Select Rename Provider", cmd_select_rename_provider, ""
     COMMAND select_signature_provider, "Select Signature Provider", cmd_select_signature_provider, ""
@@ -2156,6 +2231,8 @@ g_commands:
     COMMAND debug_evaluate_selection, "Debug: Evaluate Selection in Console", cmd_debug_evaluate_selection, ""
     COMMAND debug_focus_console, "Debug: Focus Debug Console", cmd_debug_focus_console, ""
     COMMAND debug_open_configurations, "Debug: Open Launch Configurations", cmd_debug_open_configurations, ""
+    COMMAND debug_select_configuration, "Debug: Select Configuration", cmd_debug_select_configuration, ""
+    COMMAND debug_add_configuration, "Debug: Add Configuration", cmd_debug_add_configuration, ""
     # testing (testview.s)
     COMMAND testing, "Testing", cmd_testing, ""
     COMMAND test_run_all, "Run All Tests", cmd_test_run_all, ""
@@ -2189,17 +2266,23 @@ g_commands:
     COMMAND notebook.edit_cell, "Notebook: Edit Cell", cmd_nb_edit, ""
     COMMAND notebook.command_mode, "Notebook: Command Mode", cmd_nb_command_mode, ""
     COMMAND notebook.reopen_as_text, "Notebook: Reopen as Text", cmd_nb_open_as_text, ""
+    # custom editors (customed.s)
+    COMMAND reopen_with, "Reopen Editor With...", cmd_reopen_with, ""
     # remote hosts (remoteui.s)
     COMMAND connect_to_host, "Remote: Connect to Host", cmd_connect_to_host, ""
     COMMAND attach_to_container, "Remote: Attach to Container", cmd_attach_to_container, ""
+    COMMAND connect_to_wsl, "Remote: Connect to WSL", cmd_connect_to_wsl, ""
     COMMAND remote_disconnect, "Remote: Disconnect", cmd_remote_disconnect, ""
     COMMAND remote_reconnect, "Remote: Reconnect", cmd_remote_reconnect, ""
     COMMAND remote_show_log, "Remote: Show Log", cmd_remote_show_log, ""
+    COMMAND remote_forward_port, "Remote: Forward a Port", cmd_remote_forward_port, ""
+    COMMAND remote_stop_forwarding, "Remote: Stop Forwarding Ports", cmd_remote_stop_forwarding, ""
     # editor presentation (fold.s)
     COMMAND fold, "Fold", cmd_fold, "ctrl+shift+[ ctrl+shift+{"
     COMMAND unfold, "Unfold", cmd_unfold, "ctrl+shift+] ctrl+shift+}"
     COMMAND toggle_fold, "Toggle Fold", cmd_toggle_fold, ""
     COMMAND fold_all, "Fold All", cmd_fold_all, ""
+    COMMAND inline_complete, "Trigger Inline Completion", cmd_inline_complete, "alt+\\"
     COMMAND unfold_all, "Unfold All", cmd_unfold_all, ""
     COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
     COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""

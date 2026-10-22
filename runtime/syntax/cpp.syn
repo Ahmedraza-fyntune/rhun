@@ -12,3 +12,4 @@ keywords = if else for while do switch case default break continue return goto s
 types = void char short int long float double signed unsigned bool size_t ssize_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t wchar_t char8_t char16_t char32_t string string_view vector map unordered_map set unordered_set array optional variant unique_ptr shared_ptr weak_ptr pair tuple function
 constants = nullptr NULL true false
 builtins = std cout cerr endl printf malloc free move forward make_unique make_shared
+doc_block = /** * */

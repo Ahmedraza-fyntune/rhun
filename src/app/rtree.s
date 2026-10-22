@@ -86,7 +86,9 @@ FN tree_free
     call mem_free
 11: inc r12
     jmp 1b
-2:  lea rdi, [rbx + TR_nodes]
+2:  mov rdi, rbx                # a table's columns
+    call tree_free_columns
+    lea rdi, [rbx + TR_nodes]
     call vec_free
     lea rdi, [rbx + TR_rows]
     call vec_free
@@ -333,6 +335,9 @@ node_alloc:
     call memset
     pop rax
     pop rax
+    inc dword ptr [rbx + TR_gen]
+    mov ecx, [rbx + TR_gen]
+    mov [rax + ND_gen], ecx
     mov dword ptr [rax + ND_parent], -1
     mov dword ptr [rax + ND_first], -1
     mov dword ptr [rax + ND_last], -1
@@ -991,9 +996,13 @@ FN tree_cursor
 
 # tree_set_cursor(tr, node): the keyboard's node (and the selection), -1 for none
 FN tree_set_cursor
-    mov [rdi + TR_cursor], esi
-    or dword ptr [rdi + TR_flags], TRF_SELCHANGED
     mov dword ptr [rip + g_dirty], 1
+    test dword ptr [rdi + TR_flags], TRF_MULTI
+    jz 1f
+    xor edx, edx                # several may be selected: it alone, the anchor on it
+    jmp select_click
+1:  mov [rdi + TR_cursor], esi
+    or dword ptr [rdi + TR_flags], TRF_SELCHANGED
     ret
 
 # tree_reveal(tr, node): its ancestors expanded and its row scrolled into view when next drawn
@@ -1938,6 +1947,32 @@ FN tree_toggle_check
 FN tree_draw
     PROLOGUE 96
     mov rbx, rdi
+    cmp dword ptr [rbx + TR_ncols], 0
+    je .Ltd_plain
+    # a table: its columns laid out, the header row, the rows below it
+    mov [rsp], esi
+    mov [rsp + 4], edx
+    mov [rsp + 8], ecx
+    mov [rsp + 12], r8d
+    mov [rsp + 16], r9d
+    mov rdi, rbx
+    mov edx, ecx
+    call table_layout
+    mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    mov ecx, [rsp + 8]
+    M r8d, MI_ROW
+    call table_header
+    M eax, MI_ROW
+    mov esi, [rsp]
+    mov edx, [rsp + 4]
+    add edx, eax
+    mov ecx, [rsp + 8]
+    mov r8d, [rsp + 12]
+    sub r8d, eax
+    mov r9d, [rsp + 16]
+.Ltd_plain:
     mov [rsp], esi
     mov [rsp + 4], edx
     mov [rsp + 8], ecx
@@ -2087,7 +2122,45 @@ draw_row:
     test eax, eax
     jz 11f
     and dword ptr [rsp + 16], ~(UB_PRESS | UB_DOUBLE | UB_RPRESS)
-11: # x after the indent
+11: # buttons of others (manifest menus) on the hovered or cursor row, left of the inline ones:
+    # a press within last frame's extent is theirs, not the row's
+    mov dword ptr [rip + rb_want], 0
+    cmp qword ptr [rbx + TR_rowfn], 0
+    je 13f
+    cmp dword ptr [rsp + 8], RWK_NODE
+    jne 13f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_cursor]
+    je 14f
+    test dword ptr [rsp + 16], UB_HOVER
+    jz 13f
+14: mov dword ptr [rip + rb_want], 1
+    mov eax, [rbx + TR_rect]
+    add eax, [rbx + TR_rect + 8]
+    sub eax, [rip + g_mt + 4*MI_16]
+    cmp dword ptr [rip + inl_n], 0
+    je 15f
+    mov eax, [rip + inl_left]
+    sub eax, [rip + g_mt + 4*MI_4]
+15: mov [rip + rb_edge], eax
+    mov ecx, [rsp]
+    cmp ecx, [rbx + TR_rownode]
+    jne 13f
+    mov ecx, [rip + g_mx]
+    cmp ecx, eax
+    jge 13f
+    sub eax, [rbx + TR_rowbw]
+    cmp ecx, eax
+    jl 13f
+    mov ecx, [rip + g_my]
+    cmp ecx, r13d
+    jl 13f
+    mov eax, r13d
+    add eax, [rsp + 12]
+    cmp ecx, eax
+    jge 13f
+    and dword ptr [rsp + 16], ~(UB_PRESS | UB_DOUBLE | UB_RPRESS)
+13: # x after the indent
     mov eax, [rsp + 4]
     imul eax, [rip + g_mt + 4*MI_12]
     add eax, [r15]
@@ -2300,15 +2373,23 @@ draw_row:
     mov eax, [rip + g_mt + 4*MI_20]
     add eax, [rip + g_mt + 4*MI_2]
     add r14d, eax
-47: # badge at the right
+47: # badge at the right (a table's: of its first column)
     mov eax, [rbx + TR_rect]
     add eax, [rbx + TR_rect + 8]
     sub eax, [rip + g_mt + 4*MI_16]
-    mov [rsp + 20], eax         # the right edge for the label and description
+    cmp dword ptr [rbx + TR_ncols], 0
+    je 470f
+    mov rcx, [rbx + TR_cols]
+    mov eax, [rcx + TBC_x]
+    add eax, [rcx + TBC_w]
+    sub eax, [rip + g_mt + 4*MI_4]
+470:mov [rsp + 20], eax         # the right edge for the label and description
     cmp dword ptr [rip + inl_n], 0
     je 471f
     mov eax, [rip + inl_left]   # inline buttons take the right end, over the badge
     sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, [rsp + 20]
+    jge 48f
     mov [rsp + 20], eax
     jmp 48f
 471:cmp dword ptr [r15 + ND_badge], 0
@@ -2322,8 +2403,19 @@ draw_row:
     mov eax, [rsp + 20]
     sub eax, [rip + g_mt + 4*MI_28]
     mov [rsp + 20], eax
-48: # label
-    mov edi, [r15 + ND_lcolor]
+48: # label (left of the others' row buttons when they show)
+    cmp dword ptr [rip + rb_want], 0
+    je 481f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_rownode]
+    jne 481f
+    mov eax, [rip + rb_edge]
+    sub eax, [rbx + TR_rowbw]
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, [rsp + 20]
+    jge 481f
+    mov [rsp + 20], eax
+481:mov edi, [r15 + ND_lcolor]
     mov esi, T_PANEL_FG
     call tree_color
     mov ecx, eax
@@ -2357,7 +2449,39 @@ draw_row:
     mov r8, [r15 + ND_desc]
     call ui_text_v_fit
     add rsp, 16
-49: # inline buttons, and a click on one
+49: # a table's other columns, cut where the row's buttons start
+    mov qword ptr [rsp + 24], 0
+    mov qword ptr [rsp + 32], 0
+    cmp dword ptr [rbx + TR_ncols], 1
+    jbe 490f
+    mov r8d, [rbx + TR_rect]
+    add r8d, [rbx + TR_rect + 8]
+    sub r8d, [rip + g_mt + 4*MI_12]
+    cmp dword ptr [rip + inl_n], 0
+    je 4901f
+    mov r8d, [rip + inl_left]
+    sub r8d, [rip + g_mt + 4*MI_4]
+4901:cmp dword ptr [rip + rb_want], 0
+    je 4902f
+    mov eax, [rsp]
+    cmp eax, [rbx + TR_rownode]
+    jne 4902f
+    mov eax, [rip + rb_edge]
+    sub eax, [rbx + TR_rowbw]
+    sub eax, [rip + g_mt + 4*MI_4]
+    cmp eax, r8d
+    jge 4902f
+    mov r8d, eax
+4902:mov rdi, rbx
+    mov esi, [rsp]
+    mov edx, r13d
+    mov ecx, [rsp + 12]
+    call table_cells
+    mov [rsp + 24], rax
+    mov [rsp + 32], rdx
+    mov eax, [rsp]
+    NDP r15, rbx, rax
+490:# inline buttons, and a click on one
     cmp dword ptr [rip + inl_n], 0
     je 491f
     mov rdi, rbx
@@ -2375,11 +2499,51 @@ draw_row:
     mov r8, r9
     call call_op
     jmp .Ldr_ret
-491:# tooltip
-    mov rax, [r15 + ND_tip]
+491:# the others' row buttons
+    cmp dword ptr [rip + rb_want], 0
+    je 492f
+    mov rax, [rbx + TR_rowfn]
+    mov rdi, [rbx + TR_ctx]
+    mov rsi, rbx
+    mov edx, [rsp]
+    mov ecx, [rip + rb_edge]
+    mov r8d, r13d
+    mov r9d, [rsp + 12]
+    call rax
+    mov [rbx + TR_rowbw], eax
+    mov eax, [rsp]
+    mov [rbx + TR_rownode], eax
+    mov eax, [rsp]
+    NDP r15, rbx, rax
+492:# tooltip: a cut cell's under the pointer, else the node's
+    mov rsi, [rsp + 32]
+    test rsi, rsi
+    jz 4921f
+    mov rdi, [rsp + 24]
+    call table_tip
+    jmp 4922f
+4921:mov rax, [r15 + ND_tip]
     test rax, rax
     jz .Ldr_ret
-    push rax
+    test dword ptr [rbx + TR_flags], TRF_MDTIPS
+    jz 4922f
+    mov rdi, rax                # Markdown: a document made once for the hovered row's text
+    call tree_md_tip
+    test rax, rax
+    jz 4923f
+    mov r9, rax
+    mov edi, [rbx + TR_idbase]
+    add edi, r12d
+    sub edi, [rip + tr_first]
+    mov esi, [rbx + TR_rect]
+    mov edx, r13d
+    add edx, [rsp + 12]
+    mov ecx, [rbx + TR_rect + 8]
+    mov r8d, [rsp + 16]
+    call tip_note_md
+    jmp .Ldr_ret
+4923:mov rax, [r15 + ND_tip]
+4922:push rax
     push rax
     mov edi, [rbx + TR_idbase]
     add edi, r12d
@@ -2632,6 +2796,15 @@ collect_hl:
     jmp 1b
 9:  mov eax, r14d
     EPILOGUE
+
+# tree_set_rowbuttons(tr, fn): fn(ctx, tr, node, right, y, h) -> eax the width it drew: buttons of
+#   others (the extensions' manifest view_item_inline items) on the hovered or cursor row, ending
+#   at right, left of the inline actions; a press within them is not the row's
+FN tree_set_rowbuttons
+    mov [rdi + TR_rowfn], rsi
+    mov dword ptr [rdi + TR_rowbw], 0
+    mov dword ptr [rdi + TR_rownode], -1
+    ret
 
 # tree_set_actions(tr, TA*, n): the actions inline keys name (the owner keeps the records)
 FN tree_set_actions
@@ -3089,7 +3262,15 @@ FN tree_dump
     inc dword ptr [rsp + 8]
     jmp 7b
 .Ltdu_next:
-    mov rdi, r12
+    cmp r15d, RWK_NODE          # a table row's other columns
+    jne 8f
+    cmp dword ptr [rbx + TR_ncols], 1
+    jbe 8f
+    mov rdi, rbx
+    mov esi, r14d
+    mov rdx, r12
+    call table_dump_cells
+8:  mov rdi, r12
     mov esi, 10
     call sb_push_byte
     inc r13
@@ -3102,6 +3283,8 @@ FN tree_dump
 .globl tr_focused
 tr_focused: .long 0             # the tree being drawn has the keyboard (tree_draw sets it)
 tr_first: .long 0               # its first row in view: row ids count from it
+rb_want: .long 0                # draw_row: the others' row buttons show on this row, ending at rb_edge
+rb_edge: .long 0
 inl_n: .long 0                  # the row's inline buttons: how many, where, their keys and state
 inl_left: .long 0
 inl_y: .long 0

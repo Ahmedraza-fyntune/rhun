@@ -16,6 +16,7 @@
 .equ NC_MAX, 64
 .equ NC_PER_EXT, 16
 .equ NC_SHOWN, 4
+.equ ID_NOTE_MD, 0x6a0000         # + card index * 4096: a Markdown message's links
 .equ NC_MSG_MAX, 2000
 .equ NP_MAX, 64
 .equ NP_PER_EXT, 8
@@ -48,7 +49,8 @@ F NC_y, 4
 F NC_w, 4
 F NC_h, 4
 F NC_pg, 4              # a progress card: its PG slot + 1
-F NC_pad, 4
+F NC_order, 4           # when it came, among cards and progress (ord_seq)
+F NC_md, 8              # its message as Markdown (an extension with markdown agreed), made when drawn, or 0
 ENDSTRUCT NC_SIZE
 
 # a progress
@@ -66,6 +68,8 @@ F NP_slot, 4            # NPW_VIEW: the view's instance slot
 F NP_percent, 4         # 0-100, -1 indeterminate
 F NP_cancel, 4          # 1: it can be cancelled
 F NP_open, 4            # its status entry's card is open
+F NP_order, 4           # when it came, among cards and progress (ord_seq)
+F NP_pad, 4
 ENDSTRUCT NP_SIZE
 
 .bss
@@ -74,6 +78,7 @@ nts: .zero NC_SIZE * NC_MAX
 pgs: .zero NP_SIZE * NP_MAX
 nt_seq: .long 0
 pg_seq: .long 0
+ord_seq: .long 0
 nt_stack: .zero 16              # last frame's cards: x, y, w, h (the pointer's hole this frame)
 nt_fbtn: .long 0                # its button (0 none)
 nt_order: .zero 4 * (NC_MAX + NP_MAX)   # the cards shown, oldest first: NT slot, or PG slot | 0x100
@@ -129,6 +134,8 @@ nt_by_id:
 nt_free:
     PROLOGUE
     mov rbx, rdi
+    mov rdi, [rbx + NC_md]
+    call md_free
     mov rdi, [rbx + NC_msg]
     call mem_free
     mov rdi, [rbx + NC_detail]
@@ -153,6 +160,9 @@ nt_free:
 nt_clear_content:
     PROLOGUE
     mov rbx, rdi
+    mov rdi, [rbx + NC_md]
+    call md_free
+    mov qword ptr [rbx + NC_md], 0
     mov rdi, [rbx + NC_msg]
     call mem_free
     mov rdi, [rbx + NC_detail]
@@ -215,6 +225,9 @@ nt_alloc:
     inc dword ptr [rip + nt_seq]
     mov eax, [rip + nt_seq]
     mov [r13 + NC_id], eax
+    inc dword ptr [rip + ord_seq]
+    mov eax, [rip + ord_seq]
+    mov [r13 + NC_order], eax
     call time_ms
     mov [r13 + NC_created], rax
     mov dword ptr [rip + g_dirty], 1
@@ -709,6 +722,9 @@ pg_alloc:
     inc dword ptr [rip + pg_seq]
     mov eax, [rip + pg_seq]
     mov [r13 + NP_id], eax
+    inc dword ptr [rip + ord_seq]
+    mov eax, [rip + ord_seq]
+    mov [r13 + NP_order], eax
     mov dword ptr [r13 + NP_percent], -1
     mov dword ptr [r13 + NP_slot], -1
     call time_ms
@@ -921,6 +937,8 @@ FN progress_end
 pg_cancel:
     PROLOGUE
     mov rbx, rdi
+    cmp dword ptr [rbx + NP_cancel], 0  # without Cancel: never
+    je 9f
     cmp qword ptr [rbx + NP_cancel_at], 0
     jne 9f
     call time_ms
@@ -1093,7 +1111,20 @@ FN notify_tick
     jz 11f
     cmp r13, rcx
     jb 11f
-    mov rdi, rax
+    cmp dword ptr [rax + NC_w], 0   # the pointer over it holds it, frames or not
+    je 12f
+    mov ecx, [rip + g_mx]
+    sub ecx, [rax + NC_x]
+    cmp ecx, [rax + NC_w]
+    jae 12f
+    mov ecx, [rip + g_my]
+    sub ecx, [rax + NC_y]
+    cmp ecx, [rax + NC_h]
+    jae 12f
+    lea rcx, [r13 + 2000]
+    mov [rax + NC_deadline], rcx
+    jmp 11f
+12: mov rdi, rax
     call nt_user_close
 11: inc ebx
     jmp 1b
@@ -1175,7 +1206,47 @@ collect:
 31: inc r13d
     jmp 3b
 4:  mov [rip + nt_count], r12d
-    EPILOGUE
+    # oldest first: by when each came (a slot freed and taken again is no older for it)
+    mov ebx, 1
+5:  cmp ebx, r12d
+    jae 9f
+    lea rax, [rip + nt_order]
+    mov r13d, [rax + rbx*4]     # the entry being placed, its order
+    mov edi, r13d
+    call entry_order
+    mov r14d, eax
+    mov r15d, ebx
+6:  test r15d, r15d
+    jz 7f
+    lea rax, [rip + nt_order]
+    mov edi, [rax + r15*4 - 4]
+    call entry_order
+    cmp eax, r14d
+    jbe 7f
+    lea rax, [rip + nt_order]
+    mov ecx, [rax + r15*4 - 4]
+    mov [rax + r15*4], ecx
+    dec r15d
+    jmp 6b
+7:  lea rax, [rip + nt_order]
+    mov [rax + r15*4], r13d
+    inc ebx
+    jmp 5b
+9:  EPILOGUE
+
+# entry_order(entry: a card's slot, or a progress' | 0x100) -> eax when it came
+entry_order:
+    test edi, 0x100
+    jnz 1f
+    imul rax, rdi, NC_SIZE
+    lea rcx, [rip + nts]
+    mov eax, [rcx + rax + NC_order]
+    ret
+1:  and edi, 0xff
+    imul rax, rdi, NP_SIZE
+    lea rcx, [rip + pgs]
+    mov eax, [rcx + rax + NP_order]
+    ret
 
 # notify_draw(): the cards over the window (in the overlay phase, under menus and the palette)
 FN notify_draw
@@ -1361,6 +1432,79 @@ wrap:
 9:  mov eax, r14d
     EPILOGUE
 
+# notify_copy_selection() -> eax 1 when the pointer is over a card whose Markdown message has text
+#   selected: it goes to the clipboard (Copy)
+FN notify_copy_selection
+    PROLOGUE 32
+    xor ebx, ebx
+1:  cmp ebx, NC_MAX
+    jae 8f
+    imul r12, rbx, NC_SIZE
+    lea rax, [rip + nts]
+    add r12, rax
+    cmp dword ptr [r12 + NC_id], 0
+    je 2f
+    cmp qword ptr [r12 + NC_md], 0
+    je 2f
+    mov eax, [rip + g_mx]
+    sub eax, [r12 + NC_x]
+    js 2f
+    cmp eax, [r12 + NC_w]
+    jge 2f
+    mov eax, [rip + g_my]
+    sub eax, [r12 + NC_y]
+    js 2f
+    cmp eax, [r12 + NC_h]
+    jge 2f
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, [r12 + NC_md]
+    lea rsi, [rsp]
+    call md_sel_text
+    mov r13d, eax
+    test eax, eax
+    jz 3f
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    xor edx, edx
+    call ed_clip_set
+3:  lea rdi, [rsp]
+    call sb_free
+    test r13d, r13d
+    jnz 9f
+2:  inc ebx
+    jmp 1b
+8:  xor eax, eax
+    EPILOGUE
+9:  mov eax, 1
+    EPILOGUE
+
+# nt_md(NT*) -> rax its message as Markdown when its extension agreed markdown (made once), else 0
+nt_md:
+    PROLOGUE
+    mov rbx, rdi
+    mov rax, [rbx + NC_md]
+    test rax, rax
+    jnz 9f
+    mov rcx, [rbx + NC_ext]
+    test rcx, rcx
+    jz 8f
+    FEAT_TEST rcx, FEAT_MARKDOWN
+    jz 8f
+    mov rdi, [rbx + NC_msg]
+    test rdi, rdi
+    jz 8f
+    call strlen
+    mov rsi, rax
+    mov rdi, [rbx + NC_msg]
+    call md_new
+    mov [rbx + NC_md], rax
+9:  EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
+
 # draw_card(entry, x, bottom, w, index) -> eax its height: a notification or a progress card
 draw_card:
     PROLOGUE 96
@@ -1388,15 +1532,34 @@ draw_card:
     mov ecx, [rsp + 12]
     sub ecx, [rip + g_mt + 4*MI_48]      # mark, padding and the close button
     sub ecx, [rip + g_mt + 4*MI_20]
+    mov [rsp + 84], ecx         # the text's width
     lea rdi, [rip + g_face_ui]
     mov rsi, r12
     mov rdx, r13
     mov r8d, 6
     call wrap
     mov [rsp + 20], eax         # lines
-    # the height: padding, the lines, the detail line, the bar, the buttons
     mov eax, [rip + g_face_ui + FACE_lineh]
     imul eax, [rsp + 20]
+    mov [rsp + 80], eax         # the text's height
+    mov qword ptr [rsp + 72], 0 # Markdown: an extension's message with markdown agreed
+    test rbx, rbx
+    jz 23f
+    mov rdi, rbx
+    call nt_md
+    mov [rsp + 72], rax
+    test rax, rax
+    jz 23f
+    mov rdi, rax
+    mov esi, [rsp + 84]
+    call md_layout
+    mov ecx, [rip + g_face_ui + FACE_lineh]     # at most six lines' height
+    imul ecx, ecx, 6
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [rsp + 80], eax
+23: # the height: padding, the text, the detail line, the bar, the buttons
+    mov eax, [rsp + 80]
     add eax, [rip + g_mt + 4*MI_24]
     mov [rsp + 24], eax         # h so far
     mov dword ptr [rsp + 28], 0 # buttons
@@ -1504,8 +1667,46 @@ draw_card:
     mov esi, [rsp + 40]
     mov edx, [rip + g_face_ui + FACE_lineh]
     call spinner
-55: # the message's lines
-    mov dword ptr [rsp + 44], 0
+55: # the message: Markdown (dragging selects its text), or its lines
+    mov rdi, [rsp + 72]
+    test rdi, rdi
+    jz 551f
+    mov edi, [rsp + 16]
+    shl edi, 12
+    add edi, ID_NOTE_MD + 0xfff
+    mov esi, [rsp + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 40]
+    mov ecx, [rsp + 84]
+    mov r8d, [rsp + 80]
+    call ui_btn
+    mov r8d, eax
+    mov rdi, [rsp + 72]
+    mov esi, [rsp + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 40]
+    xor ecx, ecx
+    call md_select_mouse
+    mov eax, [rsp + 16]         # its links' ids
+    shl eax, 12
+    add eax, ID_NOTE_MD
+    push rax
+    push rax
+    mov esi, [rsp + 16 + 36]
+    add esi, [rip + g_mt + 4*MI_20]
+    mov edx, [rsp + 16 + 40]
+    mov ecx, [rsp + 16 + 84]
+    mov r8d, [rsp + 16 + 80]
+    xor r9d, r9d
+    call md_draw
+    add rsp, 16
+    test eax, eax
+    js 57f
+    mov rdi, [rsp + 72]         # a link rhun follows (others are ignored in a popup)
+    mov esi, eax
+    call md_open_link
+    jmp 57f
+551:mov dword ptr [rsp + 44], 0
 56: mov eax, [rsp + 44]
     cmp eax, [rsp + 20]
     jae 57f
@@ -1527,8 +1728,7 @@ draw_card:
     add rsp, 16
     inc dword ptr [rsp + 44]
     jmp 56b
-57: mov eax, [rip + g_face_ui + FACE_lineh]
-    imul eax, [rsp + 20]
+57: mov eax, [rsp + 80]
     add eax, [rsp + 40]
     mov [rsp + 48], eax         # y after the message
     test rbx, rbx
@@ -1766,7 +1966,8 @@ draw_card:
     mov eax, [rsp + 24]
     EPILOGUE
 
-# spinner(x, y, h): three dots, one bright, turning every 300 ms
+# spinner(x, y, h): three dots, one bright, turning every 300 ms (notify_spinner for others)
+FN notify_spinner
 spinner:
     PROLOGUE 16
     mov [rsp], edi
@@ -2063,6 +2264,8 @@ nt_key:
     mov edi, ebx
     and edi, 0xff
     call pg_at
+    cmp dword ptr [rax + NP_cancel], 0  # one without Cancel cannot be cancelled from the keyboard
+    je 7f
     mov rdi, rax
     call pg_cancel
     jmp 7f
@@ -2133,7 +2336,12 @@ FN notify_dump
     call sb_push_cstr
     inc r14d
     jmp 2b
-3:  mov rdi, rbx
+3:  cmp qword ptr [r13 + NC_md], 0    # drawn as Markdown
+    je 32f
+    mov rdi, rbx
+    lea rsi, [rip + .Ld_md]
+    call sb_push_cstr
+32: mov rdi, rbx
     lea rsi, [rip + .Ld_msg]
     call sb_push_cstr
     mov rdi, rbx
@@ -2340,6 +2548,7 @@ FN notify_press_test
 .Ld_note: .asciz "note="
 .Ld_sev: .asciz " sev="
 .Ld_buttons: .asciz " buttons="
+.Ld_md: .asciz " markdown"
 .Ld_msg: .asciz " msg="
 .Ld_detail: .asciz " detail="
 .Ld_stays: .asciz " stays"

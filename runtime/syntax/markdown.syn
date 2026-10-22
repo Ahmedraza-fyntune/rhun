@@ -13,3 +13,5 @@ line = > comment
 functions = no
 numbers = no
 operators = no
+continue = - * >
+fold = indent

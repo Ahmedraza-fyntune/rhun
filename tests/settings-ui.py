@@ -34,7 +34,8 @@ BOOLS = {
                # language features
                'complete_replace complete_commit_characters lightbulb format_on_type format_on_paste '
                # editor presentation
-               'folding'),
+               'folding inline_complete color_swatches highlight_occurrences code_lens inlay_hints '
+               'semantic_highlighting'),
     'files': 'trim_trailing_whitespace final_newline format_on_save restore_session restore_project',
     'agents': 'claude codex grok opencode',
     'git': 'enabled', 'updates': 'check',
@@ -49,12 +50,14 @@ INTS = {
     ('ui', 'scroll_sensitivity'): (.1, 10., .1), ('ui', 'fast_scroll_sensitivity'): (.1, 10., .1),
     ('editor', 'font_size'): (8, 40, 1), ('editor', 'line_height'): (1., 2.5, .05),
     ('editor', 'tab_width'): (1, 16, 1), ('terminal', 'font_size'): (8, 40, 1),
+    ('editor', 'inline_complete_delay'): (0, 2000, 50),
     ('terminal', 'line_height'): (1., 2.5, .05),
     ('terminal', 'scrollback'): (0, 100000, 1000), ('terminal', 'height'): (80, 2000, 10),
     ('debug', 'console_lines'): (1000, 100000, 1000),
 }
 STRINGS = {
     ('ui', 'font'): 'missing font café.ttf', ('editor', 'font'): 'missing mono café.ttf',
+    ('ui', 'file_icons'): 'someone/icons/missing',
     ('files', 'exclude'): '.git hidden café',
     ('files', 'code_actions_on_save'): 'source.organizeImports source.fixAll',
     ('terminal', 'shell'): 'missing shell café', ('terminal', 'font'): 'missing term café.ttf',

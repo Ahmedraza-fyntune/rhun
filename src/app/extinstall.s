@@ -276,7 +276,8 @@ FN ext_install_github
     jz 2f
     lea rdi, [rbx + IR_tag]
     mov rsi, r14
-    call cstr_copy
+    mov ecx, 64
+    call copy_max
 2:  mov rdi, rbx
     call req_pin
     cmp r15d, IP_AUTO
@@ -312,9 +313,43 @@ req_pin:
     call push_req_name
     call in_sb_cstr
     mov rdi, rax
-    call extindex_pin           # rax tag, rdx digest for this target (or 0)
+    call extindex_entry
     test rax, rax
     jz 9f
+    mov r14, rax
+    # the reviewed version needs a newer rhun: it is not installed (an older tag asked for is)
+    mov rdi, rax
+    call extindex_newer
+    test rax, rax
+    jz 2f
+    mov r15, rax
+    lea rdi, [rbx + IR_tag]
+    lea rsi, [rip + .Llatest]
+    call strcmp_eq
+    test eax, eax
+    jnz 3f
+    lea rdi, [rbx + IR_tag]
+    mov rsi, [r14 + XI_tag]
+    call strcmp_eq
+    test eax, eax
+    jz 9f
+3:  lea rdi, [rip + in_words]
+    call sb_clear
+    lea rdi, [rip + in_words]
+    lea rsi, [rip + .Le_newer]
+    call sb_push_cstr
+    lea rdi, [rip + in_words]
+    mov rsi, r15
+    call sb_push_cstr
+    lea rdi, [rip + in_words]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    mov rsi, [rip + in_words + SB_ptr]
+    call req_fail
+    EPILOGUE
+2:  mov rax, [r14 + XI_tag]
+    mov rdx, [r14 + XI_digest]
     test rdx, rdx
     jz 9f
     mov r12, rax
@@ -331,10 +366,12 @@ req_pin:
     jz 9f
 1:  lea rdi, [rbx + IR_tag]
     mov rsi, r12
-    call cstr_copy
+    mov ecx, 64
+    call copy_max
     lea rdi, [rbx + IR_want]
     mov rsi, r13
-    call cstr_copy
+    mov ecx, 64
+    call copy_max
     mov dword ptr [rbx + IR_reviewed], 1
 9:  EPILOGUE
 
@@ -482,10 +519,12 @@ batch_add:
     call memset
     lea rdi, [rbx + IR_owner]
     mov rsi, r12
-    call cstr_copy
+    mov ecx, 100
+    call copy_max
     lea rdi, [rbx + IR_name]
     mov rsi, r13
-    call cstr_copy
+    mov ecx, 100
+    call copy_max
     lea rdi, [rbx + IR_tag]
     lea rsi, [rip + .Llatest]
     call cstr_copy
@@ -1906,9 +1945,22 @@ commit_one:
     mov qword ptr [rsp + 8], 0
     xor r12d, r12d
     xor r13d, r13d
-    # a record for it first: nothing on disk changes when the table is full
-    cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
-    jae .Lco_full
+    # a record for it first: nothing on disk changes when the table has no room (an installed
+    # version's record, or a removed one's, is used again)
+    call ext_slot_free
+    test eax, eax
+    jnz 0f
+    lea rdi, [rip + in_sb]
+    call sb_clear
+    mov rdi, rbx
+    call push_req_name
+    call in_sb_cstr
+    mov rdi, rax
+    mov rsi, [rip + in_sb + SB_len]
+    call ext_by_name
+    test rax, rax
+    jz .Lco_full
+0:
     # ROOT/OWNER/NAME and ROOT/.previous/OWNER/NAME
     lea rdi, [rip + .Lempty]
     call root_path
@@ -2011,6 +2063,7 @@ commit_one:
     call mem_free
     mov qword ptr [rbx + IR_tmp], 0
 5:  mov dword ptr [rbx + IR_state], IRS_DONE
+    call co_slot                # the installed version's record is used again
     # loaded, its choices read, its commands in the palette, and started
     mov rdi, r12
     lea rsi, [rbx + IR_owner]
@@ -2034,6 +2087,7 @@ commit_one:
     # and runs again
     test r15, r15
     jz .Lco_fail
+    call co_slot
     mov rdi, r12
     lea rsi, [rbx + IR_owner]
     lea rdx, [rbx + IR_name]
@@ -2056,6 +2110,20 @@ commit_one:
     mov dword ptr [rip + g_dirty], 1
     mov rax, rbx
     EPILOGUE
+
+# co_slot(): commit_one's record for the version it loads: the retired installed version's (r15),
+# else, with the table full, a removed one's
+co_slot:
+    PROLOGUE
+    test r15, r15
+    jz 1f
+    mov rdi, r15
+    call ext_slot_reuse
+    EPILOGUE
+1:  cmp qword ptr [rip + g_exts + VEC_len], EXT_CAP
+    jb 9f
+    call ext_slot_take
+9:  EPILOGUE
 
 # root_path(suffix): in_sb = ROOT + suffix + "/" (suffix "" or "/.previous")
 root_path:
@@ -2159,6 +2227,24 @@ words_push:
     lea rdi, [rip + in_words]
     jmp sb_push_cstr
 
+# ext_slot_forget(ext): its record's slot is about to hold another version (ext_slot_reuse): the
+# Remove and Roll back dialogs and the extensions menu that named it forget it, and its details page
+# goes back to the list (an update's commit puts the new version's details back)
+FN ext_slot_forget
+    PROLOGUE
+    mov rbx, rdi
+    cmp [rip + rm_ext], rbx
+    jne 1f
+    mov qword ptr [rip + rm_ext], 0
+1:  cmp [rip + g_xp_detail], rbx
+    jne 2f
+    mov qword ptr [rip + g_xp_detail], 0
+2:  mov rdi, rbx
+    call extrec_slot_forget
+    mov rdi, rbx
+    call extbar_slot_forget
+    EPILOGUE
+
 # ---------------- removing ----------------
 
 # ext_remove_ask(ext): Remove asks first (a linked one says its folder stays)
@@ -2220,6 +2306,8 @@ remove_commit:
     jz 9f
     mov rdi, rbx
     call ext_retire
+    mov rdi, rbx                # resources group: removed, not replaced: its secrets go with it
+    call secrets_ext_removed
     mov rdi, rbx
     call ext_home
     mov rdi, rax
@@ -2329,6 +2417,7 @@ remove_commit:
 .Lt_folder_stays: .asciz " Its folder "
 .Lt_stays: .asciz " stays."
 .Le_busy: .asciz "An extension is already being installed"
+.Le_newer: .asciz "the reviewed version needs rhun "
 .Le_name: .asciz "Enter owner/repo or a GitHub repository URL"
 .Le_path: .asciz "Enter the path of a folder or an archive"
 .Le_spawn: .asciz "could not start the download"
