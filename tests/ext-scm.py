@@ -662,6 +662,110 @@ class ScmPanel(Base):
         asks = [l for l in self.fake_log('hg') if re.match(r'^< \d+ quickdiff ', l)]
         self.assertEqual(len(asks), 1, self.fake_log('hg'))
 
+    # ---------------- round-3 review ----------------
+
+    def test_duplicate_ids_and_paths(self):
+        twice = scm_body('s', '', [], [('g', 'G', [], []), ('g', 'G2', [], [])])
+        dup = scm_body('s', '', [], [('g', 'G', [], [('M', '-', 'a.txt', []), ('A', '-', 'a.txt', [])])])
+        exts = self.provider(self.body(), extra=[[f'scm-update $SCM {len(twice)}', twice],
+                                                 [f'scm-update $SCM {len(dup)}', dup]])
+        out = self.start(exts, 'cmd toggle_sidebar', 'wait 300')
+        got = [r for r, _ in self.replies('hg')]
+        self.assertTrue(got[2].startswith('error 3 syntax'), got)   # a group id twice: refused
+        self.assertEqual(got[3], 'ok 4')                             # a path twice: the first one shows
+        rows = [l for l in out if l.startswith('row ')]
+        self.assertEqual(len(rows), 2, out)
+        self.assertIn('desc=M', rows[1])
+
+    def test_a_menu_opened_before_an_update_runs_nothing(self):
+        # the same layout with another command where the menu's Add was (action 4)
+        other = scm_body('s', '', [act('check', 'commit', 'go', 'Commit'), act('refresh', 'stage')],
+                         [('changes', 'Changes', [act('plus', 'stage', 'all', 'Add All')], [
+                             ('M', 'modified', 'a.txt', ['command open 5\na.txt', act('minus', 'forget', 'b.txt', 'B')])])])
+        exts = self.provider(self.body())
+        script = json.loads((self.work / 'exts/rhun-tests/hg/script.json').read_text())
+        script['commands']['set'] = [[f'scm-update $SCM {len(other)}', other]]
+        (self.work / 'exts/rhun-tests/hg/script.json').write_text(json.dumps(script))
+        self.start(exts, 'scm-menu 1 changes a.txt', 'cmd hg.set', 'wait 400', 'menu-pick Add', 'wait 300')
+        log = self.fake_log('hg')
+        self.assertFalse([l for l in log if ' ref ' in l and l.startswith('< 0 run hg.')], log)
+
+    def test_root_and_path_together_fit_a_path(self):
+        root = '/' + 'r' * 3000
+        reg = f'{len(root)} 2\n{root}hg'
+        long = scm_body('s', '', [], [('g', 'G', [], [('M', '-', 'p' * 1200, [])])])
+        cmds = {'start': [[f'scm-register {len(reg)}', reg], [f'scm-update $SCM {len(long)}', long]]}
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm', commands=cmds)
+        self.start(exts)
+        got = [r for r, _ in self.replies('hg')]
+        self.assertTrue(got[1].startswith('error 2 syntax'), got)
+
+    def test_paste_into_the_message_box_keeps_lines(self):
+        out = self.start(self.provider(self.body()), 'key ctrl+a', 'cmd copy', 'scm-focus 1', 'cmd paste',
+                         'cmd hg.input', 'wait 300')
+        self.assertIn(('ok 3 35', 'hello world\nsecond line\nthird line\n'), self.replies('hg'))
+
+    def test_a_press_in_the_tree_takes_the_keyboard_from_the_box(self):
+        out = self.start(self.provider(self.body()), 'cmd toggle_sidebar', 'wait 300', 'scm-focus 1',
+                         'click 100 481', 'type x')
+        self.assertIn('input= actions=', [l for l in out if l.startswith('scm 1 ')][0])
+
+    def test_a_root_holds_only_paths_below_it(self):
+        shutil.rmtree(self.proj / '.git')
+        (self.proj / 'subX').write_text('one\n', encoding='utf-8')
+        reg = f'{len(str(self.proj)) + 4} 2\n{self.proj}/subhg'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff',
+                        ini='on = startup\n[provides]\nquickdiff = *.txt',
+                        answers={'quickdiff': {'body': 'x\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg)}', reg]]})
+        other = self.ext('qd2', needs='', hello='hello 1 quickdiff', ini='on = startup\n[provides]\nquickdiff = subX',
+                         answers={'quickdiff': {'body': 'two\n'}})
+        out = self.run_editor(['wait-ext hg running', 'wait-ext qd2 running', 'wait 500', 'wait-quickdiff',
+                               'print-git'], exts=exts, files=('subX',), drop_waits=True)
+        # outside every registered root and outside git: the provider whose patterns match it answers
+        self.assertEqual([l for l in out if l.startswith('marks ')], ['marks ~.'], out)
+
+    def test_a_crlf_base_equal_to_the_file_opens_the_file(self):
+        exts = self.qd_provider()
+        script = json.loads((self.work / 'exts/rhun-tests/hg/script.json').read_text())
+        script['answers']['quickdiff']['body'] = 'hello world\r\nsecond line\r\nthird line\r\n'
+        (self.work / 'exts/rhun-tests/hg/script.json').write_text(json.dumps(script))
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'wait 300', 'wait-quickdiff',
+                               'scm-click 1 changes a.txt', 'wait 300', 'print-tabs'], exts=exts, drop_waits=True)
+        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=*a.txt'], out)
+
+    def test_files_with_the_same_name_get_their_own_diff_tabs(self):
+        (self.proj / 'sub').mkdir()
+        (self.proj / 'sub/a.txt').write_text('other\n', encoding='utf-8')
+        body = scm_body('default', '', [], [('changes', 'Changes', [], [('M', 'modified', 'a.txt', []),
+                                                                      ('M', 'modified', 'sub/a.txt', [])])])
+        root = str(self.proj)
+        reg = f'{len(root.encode())} 9\n{root}Mercurial'
+        exts = self.ext('hg', needs='project = read', hello='hello 1 scm quickdiff command-args',
+                        ini='on = startup\n[provides]\nquickdiff = *.txt', answers={'quickdiff': {'body': 'base\n'}},
+                        events={'0 ready': [[f'scm-register {len(reg.encode())}', reg],
+                                            [f'scm-update $SCM {len(body.encode())}', body]]})
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'open ' + str(self.proj / 'sub/a.txt'),
+                               'wait 300', 'wait-quickdiff', 'scm-click 1 changes a.txt', 'wait 200',
+                               'scm-click 1 changes sub/a.txt', 'wait 200', 'print-tabs'], exts=exts, drop_waits=True)
+        tabs = [l for l in out if l.startswith('tabs=')][-1]
+        self.assertEqual(tabs.count('a.txt (Mercurial)'), 2, out)
+
+    def test_an_update_while_the_base_is_on_its_way_keeps_the_click(self):
+        exts = self.qd_provider()
+        script = json.loads((self.work / 'exts/rhun-tests/hg/script.json').read_text())
+        script['answers']['quickdiff']['delay'] = 1
+        body = script['events']['0 ready'][1]
+        script['commands'] = {'again': [body]}
+        script['events']['0 run hg.again'] = []
+        (self.work / 'exts/rhun-tests/hg/script.json').write_text(json.dumps(script))
+        (self.work / 'exts/rhun-tests/hg/extension.ini').write_text(
+            (self.work / 'exts/rhun-tests/hg/extension.ini').read_text().replace('[commands]\n', '[commands]\nagain = Again\n'))
+        out = self.run_editor(['wait-ext hg running', 'wait-scm 1', 'scm-click 1 changes a.txt', 'cmd hg.again',
+                               'wait 1500', 'wait-quickdiff', 'wait 200', 'print-tabs'], exts=exts, files=(),
+                              drop_waits=True)
+        self.assertEqual([l for l in out if l.startswith('tabs=')], ['tabs=a.txt | *a.txt (Mercurial)'], out)
+
     def test_stopping_removes_its_panels(self):
         out = self.start(self.provider(self.body()), 'ext-set hg stop', 'wait 400')
         self.assertFalse([l for l in out if l.startswith('scm 1 ')], out)
