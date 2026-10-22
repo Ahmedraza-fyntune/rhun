@@ -13,6 +13,7 @@ opt_paths: .long 0              # past a -- argument: the rest are paths
 .p2align 3
 opt_script: .quad 0
 opt_control: .quad 0
+opt_remote: .quad 0             # --remote SPEC: a remote window
 cwd: .zero 4096
 self_path: .zero 4096
 
@@ -29,6 +30,45 @@ FN main
     xor edx, edx
     mov r10d, 8
     SYS SYS_rt_sigaction
+    # WebAssembly worker modes (src/wasm): rhun --wasm-host, rhun --wasm-spec
+    mov rdi, [rip + g_argc]
+    mov rsi, [rip + g_argv]
+    call wasm_worker_main
+    # remote hosts: the agent a remote window starts on the host (remote.s, ragent.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb .Lnot_remote_agent
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lremote_agent]
+    call strcmp_eq
+    test eax, eax
+    jz .Lnot_remote_agent
+    call remote_agent_main
+    EPILOGUE
+.Lnot_remote_agent:
+    # remote hosts: run by ssh as its askpass program (RHUN_ASKPASS names the window's socket)
+    lea rdi, [rip + .Lenv_askpass]
+    call getenv
+    test rax, rax
+    jz .Lnot_askpass
+    xor edi, edi
+    cmp qword ptr [rip + g_argc], 2
+    jb 1f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+1:  call remote_askpass_main
+.Lnot_askpass:
+    # rhun --print-env: the login shell asks for its environment (uproc.s)
+    cmp qword ptr [rip + g_argc], 2
+    jne 2f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lprint_env]
+    call strcmp_eq
+    test eax, eax
+    jz 2f
+    call uproc_print_env
+2:
     cmp qword ptr [rip + g_argc], 5
     jb 1f
     cmp qword ptr [rip + g_argc], 6
@@ -41,12 +81,37 @@ FN main
     jz 1f
     call agent_index_main
     EPILOGUE
-1:
+1:  # rhun new-extension [DIR]: a new extension from a template, in the terminal (newext.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb 3f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lnew_extension]
+    call strcmp_eq
+    test eax, eax
+    jz 3f
+    call newext_main
+3:  # rhun submit-extension [DIR]: a release into the rhun extensions index (submitext.s)
+    cmp qword ptr [rip + g_argc], 2
+    jb 4f
+    mov rax, [rip + g_argv]
+    mov rdi, [rax + 8]
+    lea rsi, [rip + .Lsubmit_extension]
+    call strcmp_eq
+    test eax, eax
+    jz 4f
+    call submitext_main
+4:
+    call sys_file_capacity
     call parse_args
+    call links_relay_args       # resources group: a link for another rhun goes there (links.s)
     call detach
     call raster_init
     call appearance_init
-    call app_init
+    cmp qword ptr [rip + opt_remote], 0  # remote hosts: extensions are read as the host's (remoteext.s)
+    je 2f
+    mov dword ptr [rip + g_remote_window], 1
+2:  call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
 .ifdef WINDOWS
@@ -104,6 +169,16 @@ FN main
     jmp .Lm_exit
 3:  call loop_run
 .Lm_exit:
+    call app_clip_reset
+    call headless_clip_reset
+    call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
+    call bp_save
+    call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions
+    call testexec_quit          # testing: test processes do not outlive rhun
+    call ext_shutdown
+    call uproc_quit_end
+    call remote_shutdown        # remote hosts: the askpass socket
+    call ws_journal_cleanup     # wsedit: nothing can undo this session's workspace edits now
     call agents_shutdown
     call ai_shutdown
     call session_remember_project
@@ -121,6 +196,9 @@ FN main
 
 .section .rodata
 .Lagent_worker: .asciz "--agent-index"
+.Lprint_env: .asciz "--print-env"
+.Lnew_extension: .asciz "new-extension"
+.Lsubmit_extension: .asciz "submit-extension"
 .text
 parse_args:
     PROLOGUE
@@ -194,8 +272,30 @@ parse_args:
     lea rsi, [rip + .Lo_empty]
     call strcmp_eq
     test eax, eax
-    jz 41f
+    jz 42f
     mov dword ptr [rip + opt_empty], 1
+    jmp 9f
+42: mov rdi, r14
+    lea rsi, [rip + .Lo_remote]
+    call strcmp_eq
+    test eax, eax
+    jz 43f
+    inc rbx
+    cmp rbx, r13
+    jae .Lpa_done
+    mov rax, [r12 + rbx*8]
+    mov [rip + opt_remote], rax
+    jmp 9f
+43: mov rdi, r14
+    lea rsi, [rip + .Lo_extensions]
+    call strcmp_eq
+    test eax, eax
+    jz 41f
+    inc rbx
+    cmp rbx, r13
+    jae .Lpa_done
+    mov rax, [r12 + rbx*8]
+    mov [rip + g_ext_dir], rax
     jmp 9f
 41: lea rdi, [rip + g_start_paths]
     mov esi, 8
@@ -437,7 +537,18 @@ parse_size:
 
 open_initial:
     PROLOGUE
-    xor r12d, r12d              # got a directory
+    # a remote window opens its folder once connected (remoteui.s)
+    mov rdi, [rip + opt_remote]
+    test rdi, rdi
+    jz 10f
+    xor esi, esi
+    cmp qword ptr [rip + g_start_paths + VEC_len], 0
+    je 11f
+    mov rax, [rip + g_start_paths + VEC_ptr]
+    mov rsi, [rax]
+11: call remote_start
+    jmp 6f
+10: xor r12d, r12d              # got a directory
     xor ebx, ebx
 1:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 2f
@@ -475,13 +586,35 @@ open_initial:
     js 3f
     lea rdi, [rip + cwd]
     call app_set_project
-3:  xor ebx, ebx
+3:  call ws_recover             # wsedit: workspace edits a crash cut short are put back first
+    xor ebx, ebx
+    xor r13d, r13d              # a folder opened: later ones join the workspace (workspace.s)
 4:  cmp rbx, [rip + g_start_paths + VEC_len]
     jae 5f
     mov rax, [rip + g_start_paths + VEC_ptr]
     mov rdi, [rax + rbx*8]
+    mov r14, rdi
+    call app_path_is_dir
+    test eax, eax
+    jz 41f
+    test r13d, r13d
+    jz 40f
+    cmp dword ptr [r14], 0x6e756872     # "rhun://": a link opens as it always did
+    jne 43f
+    cmp byte ptr [r14 + 4], ':'
+    jne 43f
+    cmp byte ptr [r14 + 5], '/'
+    jne 43f
+    cmp byte ptr [r14 + 6], '/'
+    je 41f
+43:
+    mov rdi, r14
+    call workspace_add_ui
+    jmp 42f
+40: mov r13d, 1
+41: mov rdi, r14
     call app_open_path
-    inc rbx
+42: inc rbx
     jmp 4b
 5:  # nothing opened: bring back the last session
     cmp dword ptr [rip + opt_empty], 0
@@ -517,6 +650,10 @@ open_initial:
 .Lo_scale: .asciz "--scale"
 .Lo_wait: .asciz "--wait"
 .Lo_empty: .asciz "--empty"
+.Lo_extensions: .asciz "--extensions"
+.Lo_remote: .asciz "--remote"
+.Lremote_agent: .asciz "--remote-agent"
+.Lenv_askpass: .asciz "RHUN_ASKPASS"
 .Lo_dashdash: .asciz "--"
 .Ldevnull: .asciz "/dev/null"
 .Lself_exe: .asciz "/proc/self/exe"
@@ -529,13 +666,18 @@ open_initial:
 .Lversion: .asciz "rhun "
 .Lnl: .asciz "\n"
 .Lusage: .ascii "usage: rhun [folder] [files...]\n"
+    .ascii "       rhun new-extension [DIR]   a new extension from a template (--help for its flags)\n"
+    .ascii "       rhun submit-extension [DIR] its release into the rhun extensions index (--help)\n"
     .ascii "  --wait           stay in the terminal until rhun is closed (for EDITOR)\n"
     .ascii "  --empty          start without restoring a project or tabs\n"
     .ascii "  --headless WxH   no display; use with --script or --control\n"
     .ascii "  --script FILE    run control commands from FILE and exit\n"
     .ascii "  --control PATH   accept control commands on a unix socket\n"
+    .ascii "  --extensions DIR load extensions from DIR instead of the config folder\n"
+    .ascii "  --remote HOST    open the folder on a remote host: ssh:HOST, docker:NAME, podman:NAME\n"
     .ascii "  --scale F        display scale where the platform has none\n"
     .ascii "  --               the arguments after it are paths (rhun://file/ links too)\n"
     .asciz "  --version        print the version\n"
 .p2align 2
 .Lf100: .float 100.0
+

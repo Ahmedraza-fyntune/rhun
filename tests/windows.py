@@ -88,10 +88,40 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config')
         if name == 'config':
             env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/config-reload')
+        if name == 'ext-settings-target':
+            env['XDG_CONFIG_HOME'] = winpath(ROOT / 'tests/data/ext-settings-target')
         equal(run(exe + '.exe', *arguments, env=env).stdout,
               (ROOT / 'tests/data' / (name + '.expected')).read_bytes())
 
-    for name, exe in [('cpu', 'cpu'), ('doc', 'doc'), ('syntax', 'syntax'), ('themes', 'theme'),
+    check('installer-unicode', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/installer-unicode.py')], check=True))
+    check('ext-settings-target', lambda: golden('ext-settings-target', 'ext_settings_target_test'))
+    for driver in ('ext-flush', 'ext-pending-commands', 'ext-pending-owner'):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('ext-events', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/ext-events.py'), '--negative-controls',
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('windows-nonblock', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/windows-nonblock.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('doc-language', lambda: golden('doc-language', 'doc_language_test'))
+    check('doc-language-choice', lambda: golden('doc-language-choice', 'doc_language_choice_test'))
+    check('file-read-limited', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/file-read-limited.py'),
+         '--exe', str(OUT / 'file_read_limited_test.exe'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    if not args.wine:
+        check('mem-try', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-try.py')], check=True))
+        check('mem-helpers', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/mem-helpers.py')], check=True))
+        check('dir-scan', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/dir-scan.py')], check=True))
+    check('windows-package', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/windows-package.py')], check=True))
+    for driver in ('ext-watch-native',):
+        check(driver, lambda driver=driver: subprocess.run(
+            [sys.executable, str(ROOT / ('tests/' + driver + '.py')),
+             *(['--wine', args.wine] if args.wine else [])], check=True))
+
+    for name, exe in [('ext-send', 'ext_send'), ('cpu', 'cpu'), ('doc', 'doc'), ('doc-selections', 'doc_selections'), ('doc-multi-edit', 'doc_multi_edit'), ('doc-batch', 'doc_batch'), ('doc-batch-guard', 'doc_batch_guard'), ('editor-multi-type', 'editor_multi_type'), ('editor-multi-newline', 'editor_multi_newline'), ('editor-multi-delete', 'editor_multi_delete'), ('editor-multi-tab', 'editor_multi_tab'), ('clipboard-write', 'clipboard_write'), ('clipboard-wire', 'clipboard_wire'), ('clipboard-metadata', 'clipboard_metadata'), ('clipboard-context', 'clipboard_context'), ('clipboard-paste-queue', 'clipboard_paste_queue'), ('editor-clipboard', 'editor_clipboard'), ('editor-paste', 'editor_paste'), ('snippet', 'snippet'), ('snippet-choice', 'snippet_choice'), ('snippet-unicode', 'snippet_unicode'), ('snippet-regex', 'snippet_regex'), ('snippet-regex-state', 'snippet_regex_state'), ('snippet-regex-scope', 'snippet_regex_scope'), ('snippet-regex-match', 'snippet_regex_match'), ('snippet-regex-limits', 'snippet_regex_limits'), ('snippet-replacement', 'snippet_replacement'), ('snippet-case', 'snippet_case'), ('snippet-case-api', 'snippet_case_api'), ('snippet-transform', 'snippet_transform'), ('snippet-transform-api', 'snippet_transform_api'), ('snippet-transform-indent', 'snippet_transform_indent'), ('snippet-transform-payload', 'snippet_transform_payload'), ('snippet-indent-capture', 'snippet_indent_capture'), ('snippet-transform-leave', 'snippet_transform_leave'), ('snippet-base64', 'snippet_base64'), ('syntax', 'syntax'), ('themes', 'theme'),
                       ('term', 'term'), ('diff', 'diff'), ('cols', 'cols'), ('config', 'config'),
                       ('textarea', 'textarea'), ('ui-clip', 'ui_clip'), ('fill', 'fill'), ('memmove', 'memmove'), ('keys', 'keys'),
                       ('config-strings', 'config_strings')]:
@@ -112,6 +142,20 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
                                   b'rhun ' + (ROOT / 'VERSION').read_bytes().strip() + b'\n'))
     check('input/right-alt-and-altgr', lambda: run('input_test.exe'))
     check('input/wheel-and-touchpad-steps', lambda: run('wheel_test.exe'))
+    # resources group: secrets in the Credential Manager, what an extension's job costs
+    check('extensions/secrets-and-cost', lambda: run('resources_test.exe'))
+    # remote hosts: socketpair's channels and ssh's askpass through the window's pipe
+    check('remote/channels', lambda: run('chan_test.exe'))
+    check('remote/askpass', lambda: run('askpass_test.exe'))
+    # Winsock (src/win/sock.s): sockets on loopback, a debug adapter reached over TCP
+    check('sockets/tcp-loopback', lambda: run('sock_test.exe'))
+    check('debugger/tcp-server', lambda: subprocess.run(
+        [sys.executable, str(ROOT / 'tests/windows-debug-tcp.py'),
+         *(['--wine', args.wine] if args.wine else [])], check=True))
+    check('clipboard/bounded-read', lambda: golden('windows-clipboard-read', 'clipboard_read_test'))
+    if not args.wine or os.environ.get('DISPLAY'):
+        check('clipboard/native-metadata', lambda: golden('windows-clipboard-metadata', 'clipboard_native_metadata_test'))
+        check('clipboard/owner-reentry', lambda: run('clipboard_reentry_test.exe'))
     if not args.wine:
         # Wine's MapVirtualKeyW gives VK_NUMPAD0 no character
         check('input/keypad-zoom', lambda: run('keypad_test.exe'))
@@ -120,9 +164,12 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
             [sys.executable, str(ROOT / 'tests/windows-longpaths.py')], check=True))
         check('clipboard/contention-copy-and-paste', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/windows-clipboard.py')], check=True))
+        check('clipboard/native-failures', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/windows-clipboard-faults.py')], check=True))
         for name in ('settings-ui', 'appearance', 'editor-matrix', 'stress', 'splitter', 'scroll-sensitivity',
                      'file-launch', 'readonly-save', 'field-blink', 'window-focus',
-                     'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search'):
+                     'new-tab', 'tab-view', 'tab-drag', 'tab-pin', 'settings-search',
+                     'multicursor', 'multicursor-vim'):
             check('ui/' + name, lambda name=name: subprocess.run(
                 [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
                 env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
@@ -153,11 +200,27 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         check('explorer/tabs-follow-deletes-and-renames', lambda: subprocess.run(
             [sys.executable, str(ROOT / 'tests/explorer-tabs.py')], check=True,
             env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        # data extensions: no program, their themes, grammars and icon themes; a configured one at startup
+        check('extensions/ext-data', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/ext-data.py')], check=True,
+            env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
+        # extensions: the host with the Python test extension, the title bar and page with installs
+        # from a local release tree, and the showcase installed from GitHub (its Windows build)
+        for name in ('save', 'save-actions', 'snippets', 'snippet-choices', 'snippet-variants', 'snippet-transforms', 'snippet-final', 'snippet-context', 'ext-host', 'ext-commands', 'ext-snapshots', 'ext-providers', 'ext-language', 'ext-scheduling', 'ext-watch', 'ext-boundaries', 'ext-ui', 'ext-showcase',
+                     'ext-updates', 'ext-remove-clean', 'ext-dev-install', 'ext-browse', 'ext-packs', 'ext-updates-github', 'ext-selections',
+                     'new-extension', 'submit-extension'):
+            check('extensions/' + name, lambda name=name: subprocess.run(
+                [sys.executable, str(ROOT / ('tests/' + name + '.py'))], check=True,
+                env=dict(os.environ, RHUN_TEST_EXE=str(OUT / 'rhun.com'))))
 
     def ui(name):
         result = run('rhun.com', winpath(ROOT), '--headless', '1400x860', '--script',
                      'tests/scripts/' + name + '.rsc', env=environment('ui-' + name))
-        equal(result.stdout, (ROOT / 'tests/data' / (name + '.ui.expected')).read_bytes())
+        # a Windows golden where the project menu differs (Connect to WSL…)
+        expected = ROOT / 'tests/data' / (name + '.windows.ui.expected')
+        if not expected.exists():
+            expected = ROOT / 'tests/data' / (name + '.ui.expected')
+        equal(result.stdout, expected.read_bytes())
 
     for name in ['editing', 'clipboard', 'movelines', 'find', 'findcase', 'replace', 'tabs', 'reopen', 'vim', 'wrap', 'togglecomment',
                  'highlight', 'image', 'mouse', 'cursor', 'compose', 'contextmenu',

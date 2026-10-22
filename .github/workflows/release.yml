@@ -47,6 +47,7 @@ jobs:
           cp assets/icons/rhun-256.png "$r/share/icons/hicolor/256x256/apps/rhun.png"
           cp assets/icons/rhun-512.png "$r/share/icons/hicolor/512x512/apps/rhun.png"
           cp LICENSE "$r/"
+          cp assets/licenses/LICENSE-Unicode.txt "$r/"
           test "$("$r/bin/rhun" --version)" = "rhun $v"
           tar -czf "rhun-$v-linux-x86_64.tar.gz" -C stage "rhun-$v"
       - uses: actions/upload-artifact@v4

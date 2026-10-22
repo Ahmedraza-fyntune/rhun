@@ -206,6 +206,25 @@ unpack_linux() {
 place_binary() {
     dir=$(dirname "$1")
     mkdir -p "$dir"
+    # Older archives have no separate data notice. New archives retain it on updates too.
+    if [ -f "$src/LICENSE-Unicode.txt" ]; then
+        license_tmp=
+        if [ "$(basename "$dir")" = bin ]; then
+            license_dir=$(dirname "$dir")/share/licenses/rhun
+            if mkdir -p "$license_dir" 2>/dev/null &&
+                license_tmp=$(mktemp "$license_dir/.LICENSE-Unicode.XXXXXX" 2>/dev/null); then
+                license_dest=$license_dir/LICENSE-Unicode.txt
+            fi
+        fi
+        # A portable target only needs its own directory to be writable.
+        if [ -z "$license_tmp" ]; then
+            license_tmp=$(mktemp "$dir/.rhun-LICENSE-Unicode.XXXXXX")
+            license_dest=$dir/rhun-LICENSE-Unicode.txt
+        fi
+        cp "$src/LICENSE-Unicode.txt" "$license_tmp"
+        chmod 644 "$license_tmp"
+        mv -f "$license_tmp" "$license_dest"
+    fi
     cp "$src/bin/rhun" "$dir/.rhun.new"
     chmod 755 "$dir/.rhun.new"
     mv -f "$dir/.rhun.new" "$1"
@@ -717,6 +736,8 @@ uninstall() {
         for d in scalable/apps/rhun.svg 256x256/apps/rhun.png 512x512/apps/rhun.png; do
             rm -f "$prefix/share/icons/hicolor/$d"
         done
+        rm -f "$prefix/share/licenses/rhun/LICENSE-Unicode.txt" "$prefix/bin/rhun-LICENSE-Unicode.txt"
+        rmdir "$prefix/share/licenses/rhun" 2>/dev/null || true
         refresh_desktop "$prefix"
         say "rhun is removed from $prefix"
     else

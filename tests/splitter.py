@@ -214,8 +214,8 @@ class SidebarSplit(unittest.TestCase):
     # queues both before the frame, while the first press's owner is still the active widget
 
     def test_batched_double_click_selects_word(self):
-        out = self.run_editor(['wait 200', 'move 420 300', 'down', 'wait 60', 'up-down', 'wait 60',
-                               'up', 'wait 60', 'print-state'])
+        out = self.run_editor(['wait 200', 'move 432 300', 'down', 'wait 60', 'up-down', 'wait 60',
+                               'up', 'wait 60', 'print-state'])     # "to" (past the fold lane)
         self.assertIn('sel=2', out)
 
     def test_batched_press_moves_focus_to_terminal(self):
@@ -280,14 +280,14 @@ class SidebarSplit(unittest.TestCase):
 
     def test_tooltip_instant_after_first(self):
         # adjacent toolbar tips skip the delay once one is open
-        v = self.values(['wait 200', 'move 770 14', 'wait 650', 'echo first=', 'print-tip',
-                         'move 810 14', 'wait 60', 'echo second=', 'print-tip'])
+        v = self.values(['wait 200', 'move 734 14', 'wait 650', 'echo first=', 'print-tip',
+                         'move 774 14', 'wait 60', 'echo second=', 'print-tip'])
         self.assertIn('Terminal', v['first'])
         self.assertIn('Agents', v['second'])
 
     def test_tooltip_instant_across_the_gap_between_buttons(self):
-        actions = ['wait 200', 'move 770 14', 'wait 650']
-        actions += ['move %d 14' % x for x in range(772, 812, 4)]
+        actions = ['wait 200', 'move 734 14', 'wait 650']
+        actions += ['move %d 14' % x for x in range(736, 776, 4)]
         actions += ['wait 60', 'echo second=', 'print-tip']
         self.assertIn('Agents', self.values(actions)['second'])
 

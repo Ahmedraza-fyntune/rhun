@@ -15,6 +15,19 @@ g_dirty: .long 0
 .text
 
 # watch_add(fd, events, handler, ctx)
+# Checked insertion for callers that own a resource needing cleanup on capacity failure.
+FN watch_try_add
+    cmp dword ptr [rip + nwatch], MAX_WATCH
+    jae .Lwta_full
+    sub rsp, 8
+    call watch_add
+    add rsp, 8
+    mov eax, 1
+    ret
+.Lwta_full:
+    xor eax, eax
+    ret
+
 FN watch_add
     mov eax, [rip + nwatch]
     cmp eax, MAX_WATCH
@@ -28,6 +41,11 @@ FN watch_add
     mov [r9 + PW_ctx], rcx
     inc dword ptr [rip + nwatch]
 1:  ret
+
+# watch_count() -> eax the fds watched (rhun submit-extension waits for the browser's opener)
+FN watch_count
+    mov eax, [rip + nwatch]
+    ret
 
 # watch_remove(fd)
 FN watch_remove

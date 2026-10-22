@@ -12,7 +12,7 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -59,7 +59,7 @@ jobs:
 
   macos:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Build

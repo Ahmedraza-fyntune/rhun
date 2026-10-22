@@ -98,7 +98,7 @@ FN mac_open_window
 2:  ldr x12, [x10, x11, lsl #3]
     str x12, [x9, x11, lsl #3]
     add x11, x11, #1
-    cmp x11, #13
+    cmp x11, #14
     b.lo 2b
     STW wzr, g_csd
     CLS x0, NSApplication
@@ -759,11 +759,13 @@ cursor_set:
     ldp x29, x30, [sp], #16
     ret
 
-// p_clip_set(ptr, len)
+// p_clip_set(ptr, len) -> accepted write
+FN mac_clip_set
 p_clip_set:
     XENTRY
     mov x19, x0
     mov x20, x1
+    mov x21, #0
     CLS x0, NSString
     MSG alloc
     mov x2, x19
@@ -771,38 +773,264 @@ p_clip_set:
     mov x4, #4                  // NSUTF8StringEncoding
     MSG initWithBytes_length_encoding_
     mov x19, x0
+    cbz x19, 9f
     CLS x0, NSPasteboard
     MSG generalPasteboard
     mov x20, x0
     MSG clearContents
-    cbz x19, 9f
     mov x0, x20
     mov x2, x19
     EXT x3, _NSPasteboardTypeString
     MSG setString_forType_
+    mov x21, x0
     mov x0, x19
     MSG release
-9:  XLEAVE
+9:  mov x8, x21
+    XLEAVE
+
+// The private type always travels with the exact counted text in one eager item.
+clip_native_type:
+    ENTER
+    CLS x0, NSString
+    ADR x2, Lclip_native_type
+    MSG stringWithUTF8String_
+    LEAVE
+    ret
+
+// mac_clip_write_board(board, wire, len) -> accepted bool in x8.
+// Prepare both representations before changing ownership of the pasteboard.
+FN mac_clip_write_board
+    XENTRY 48
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x27, #0
+    cbz x19, Lmcw_return
+    mov x0, x20
+    mov x1, x21
+    mov x2, sp                   // shared CWB32: text, len, line, metadata
+    XCALL clip_wire_decode
+    cbz w8, Lmcw_return
+    bl _objc_autoreleasePoolPush
+    str x0, [sp, #32]
+    mov x22, #0
+    mov x23, #0
+    mov x24, #0
+    CLS x0, NSData
+    MSG alloc
+    mov x2, x20
+    mov x3, x21
+    MSG initWithBytes_length_
+    mov x22, x0
+    cbz x22, Lmcw_cleanup
+    CLS x0, NSString
+    MSG alloc
+    ldr x2, [sp]
+    ldr x3, [sp, #8]
+    mov x4, #4                  // NSUTF8StringEncoding
+    MSG initWithBytes_length_encoding_
+    mov x23, x0
+    cbz x23, Lmcw_cleanup
+    CLS x0, NSPasteboardItem
+    MSG new
+    mov x24, x0
+    cbz x24, Lmcw_cleanup
+    bl clip_native_type
+    mov x25, x0
+    cbz x25, Lmcw_cleanup
+    mov x0, x24
+    mov x2, x22
+    mov x3, x25
+    MSG setData_forType_
+    cbz w0, Lmcw_cleanup
+    mov x0, x24
+    mov x2, x23
+    EXT x3, _NSPasteboardTypeString
+    MSG setString_forType_
+    cbz w0, Lmcw_cleanup
+    CLS x0, NSArray
+    mov x2, x24
+    MSG arrayWithObject_
+    mov x26, x0
+    cbz x26, Lmcw_cleanup
+    mov x0, x19
+    MSG clearContents
+    mov x0, x19
+    mov x2, x26
+    MSG writeObjects_
+    cmp w0, #0
+    cset w27, ne
+Lmcw_cleanup:
+    mov x0, x24
+    MSG release
+    mov x0, x23
+    MSG release
+    mov x0, x22
+    MSG release
+    ldr x0, [sp, #32]
+    bl _objc_autoreleasePoolPop
+Lmcw_return:
+    mov x8, x27
+    XLEAVE
+
+FN mac_clip_write
+    XENTRY
+    mov x19, x0
+    mov x20, x1
+    CLS x0, NSPasteboard
+    MSG generalPasteboard
+    mov x1, x19
+    mov x2, x20
+    XCALL mac_clip_write_board
+    XLEAVE
+
+// mac_clip_read_native(board, limit) -> owned raw wire in x8, counted length in x2.
+// Multiple items retain the existing combined plain-text fallback behavior.
+FN mac_clip_read_native
+    XENTRY
+    mov x19, x0
+    mov x20, x1
+    mov x22, #0
+    mov x23, #0
+    cbz x19, Lmcr_return
+    mov x9, #64 << 20
+    add x9, x9, #8192
+    add x9, x9, #32             // CLW_MAX: text plus header and512 segments
+    cmp x20, x9
+    b.hi Lmcr_return
+    bl _objc_autoreleasePoolPush
+    mov x21, x0
+    mov x0, x19
+    MSG pasteboardItems
+    cbz x0, Lmcr_cleanup
+    mov x24, x0
+    MSG count
+    cmp x0, #1
+    b.ne Lmcr_cleanup
+    mov x0, x24
+    mov x2, #0
+    MSG objectAtIndex_
+    mov x24, x0
+    bl clip_native_type
+    cbz x0, Lmcr_cleanup
+    mov x2, x0
+    mov x0, x24
+    MSG dataForType_
+    cbz x0, Lmcr_cleanup
+    mov x24, x0
+    MSG length
+    mov x23, x0
+    cmp x23, x20
+    b.hi Lmcr_bad
+    mov x0, x24
+    MSG bytes
+    mov x25, x0
+    cbnz x25, 1f
+    cbnz x23, Lmcr_bad
+1:  add x0, x23, #1
+    XCALL mem_alloc_try
+    mov x22, x8
+    cbz x22, Lmcr_bad
+    mov x0, x22
+    mov x1, x25
+    mov x2, x23
+    XCALL memcpy
+    b Lmcr_cleanup
+Lmcr_bad:
+    mov x23, #0
+Lmcr_cleanup:
+    mov x0, x21
+    bl _objc_autoreleasePoolPop
+Lmcr_return:
+    mov x8, x22
+    mov x2, x23
+    XLEAVE
+
+// mac_clip_read(board, byteLimit) -> owned counted UTF-8 in x8, byte length in x2.
+// A successful empty string has a nonnil allocation. Missing text returns 0, 0.
+FN mac_clip_read
+    XENTRY
+    mov x19, x0
+    mov x20, x1
+    mov x22, #0
+    mov x23, #0
+    cbz x19, 8f
+    mov x9, #64 << 20
+    cmp x20, x9
+    b.hi 8f
+    bl _objc_autoreleasePoolPush
+    mov x21, x0
+    mov x0, x19
+    EXT x2, _NSPasteboardTypeString
+    MSG stringForType_
+    cbz x0, 9f
+    mov x19, x0
+    mov x2, #4                  // NSUTF8StringEncoding
+    MSG lengthOfBytesUsingEncoding_
+    cmp x0, x20
+    b.hi 9f
+    mov x23, x0
+    mov x0, x19
+    MSG UTF8String
+    cbz x0, 7f
+    mov x1, x23
+    XCALL mem_dup
+    mov x22, x8
+    b 9f
+7:  mov x23, #0
+9:  mov x0, x21
+    bl _objc_autoreleasePoolPop
+8:  mov x8, x22
+    mov x2, x23
+    XLEAVE
+
+// Deliver through the same path for the general board and private-board tests.
+FN mac_clip_paste_board
+    mov x1, #0
+    b mac_clip_paste_board_tagged
+
+// Capture the token before retrieval. The detached bytes outlive any next queued request.
+FN mac_clip_paste_board_tagged
+    XENTRY
+    mov x20, x1
+    mov x22, x0
+    mov x1, #64 << 20
+    add x1, x1, #8192
+    add x1, x1, #32
+    XCALL mac_clip_read_native
+    mov x19, x8
+    cbz x19, 1f
+    mov x0, x20
+    mov x1, x19
+    XCALL app_clip_complete_native  // x2 is the owned wire's counted length
+    mov w21, w8
+    mov x0, x19
+    XCALL mem_free
+    cbnz w21, 2f
+1:  mov x0, x22
+    mov x1, #64 << 20
+    XCALL mac_clip_read
+    mov x19, x8
+    mov x21, x2
+    mov x0, x20
+    mov x1, x19
+    mov x2, x21
+    cmp x19, #0
+    cset x3, ne
+    XCALL app_clip_complete
+    mov x0, x19
+    XCALL mem_free
+2:  XLEAVE
 
 // p_clip_get(): app_on_paste(text) right away
 p_clip_get:
     XENTRY
-    bl _objc_autoreleasePoolPush
-    mov x21, x0
+    ADR x9, app_clip_active_token
+    ldr x19, [x9]
     CLS x0, NSPasteboard
     MSG generalPasteboard
-    EXT x2, _NSPasteboardTypeString
-    MSG stringForType_
-    cbz x0, 9f
-    MSG UTF8String
-    cbz x0, 9f
-    mov x19, x0
-    bl _strlen
-    mov x1, x0
-    mov x0, x19
-    XCALL app_on_paste
-9:  mov x0, x21
-    bl _objc_autoreleasePoolPop
+    mov x1, x19
+    XCALL mac_clip_paste_board_tagged
     XLEAVE
 
 // window requests come while drawing; they run after the frame
@@ -1117,6 +1345,9 @@ Lkd_char:
     cbz w0, 51f
     mov w24, w0
 51:
+    // a chord waiting for its second stroke takes every key (keys.s)
+    XCALL keys_chord_pending
+    cbnz w0, 6f
     // letters bind lowercase, as rhun looks them up
     tst w22, #MOD_CTRL
     b.ne 6f
@@ -1127,15 +1358,17 @@ Lkd_char:
     mov w1, w22
     XCALL keys_lookup
     cbz x8, Lkd_ime
-6:  mov w0, w23               // and the key's unshifted character (g_key_base)
-    mov w1, #0
+6:  mov w0, w23               // and the key's unshifted character (g_key_base), the same on the
+    mov w1, #0                  // ASCII-capable layout for chords (g_key_latin)
     bl ascii_key
     STW w0, g_key_base
+    STW w0, g_key_latin
     mov w0, w24
     mov w1, w24
     mov w2, w22
     XCALL app_on_key
     STW wzr, g_key_base
+    STW wzr, g_key_latin
     b Lkd_done
 Lkd_ime:
     // the input method: plain text, dead keys, composed input
@@ -1947,6 +2180,7 @@ plat_fns:
     .quad p_maximize
     .quad p_title
     .quad p_nop                 // P_menu
+    .quad mac_clip_write
 
 // CUR_* -> NSCursor class methods
 cursor_sels:
@@ -2029,6 +2263,7 @@ appdel_methods:
     .quad 0
 
 .section __TEXT,__cstring,cstring_literals
+Lclip_native_type: .asciz "com.r13.rhun.clipboard.v1"
 t_B: .asciz "B@:"
 t_B_id: .asciz "B@:@"
 t_B_id_B: .asciz "B@:@B"
@@ -2142,6 +2377,7 @@ DEFSEL observeValueForKeyPath_ofObject_change_context_, "observeValueForKeyPath:
 DEFSEL standardUserDefaults, "standardUserDefaults"
 DEFSEL stringForKey_, "stringForKey:"
 DEFSEL UTF8String, "UTF8String"
+DEFSEL lengthOfBytesUsingEncoding_, "lengthOfBytesUsingEncoding:"
 DEFSEL set, "set"
 DEFSEL arrowCursor, "arrowCursor"
 DEFSEL IBeamCursor, "IBeamCursor"
@@ -2149,10 +2385,16 @@ DEFSEL pointingHandCursor, "pointingHandCursor"
 DEFSEL resizeLeftRightCursor, "resizeLeftRightCursor"
 DEFSEL resizeUpDownCursor, "resizeUpDownCursor"
 DEFSEL initWithBytes_length_encoding_, "initWithBytes:length:encoding:"
+DEFSEL initWithBytes_length_, "initWithBytes:length:"
 DEFSEL generalPasteboard, "generalPasteboard"
 DEFSEL clearContents, "clearContents"
 DEFSEL setString_forType_, "setString:forType:"
 DEFSEL stringForType_, "stringForType:"
+DEFSEL setData_forType_, "setData:forType:"
+DEFSEL dataForType_, "dataForType:"
+DEFSEL writeObjects_, "writeObjects:"
+DEFSEL pasteboardItems, "pasteboardItems"
+DEFSEL bytes, "bytes"
 DEFSEL distantPast, "distantPast"
 DEFSEL nextEventMatchingMask_untilDate_inMode_dequeue_, "nextEventMatchingMask:untilDate:inMode:dequeue:"
 DEFSEL sendEvent_, "sendEvent:"
@@ -2262,6 +2504,8 @@ DEFCLS NSAttributedString
 DEFCLS NSEvent
 DEFCLS NSCursor
 DEFCLS NSPasteboard
+DEFCLS NSPasteboardItem
+DEFCLS NSData
 DEFCLS NSAppearance
 DEFCLS NSUserDefaults
 DEFCLS NSTrackingArea

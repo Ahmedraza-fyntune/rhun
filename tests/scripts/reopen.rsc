@@ -24,5 +24,6 @@ key ctrl+shift+t
 key ctrl+shift+t
 print-tabs
 key ctrl+k
+key ctrl+t
 print-state
 quit

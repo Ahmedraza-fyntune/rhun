@@ -77,6 +77,7 @@ class NewWindow(unittest.TestCase):
         out = self.run_editor(['click 60 20', 'print-menu', 'click 100 134 shift', 'wait 300',
                                'print-project'])
         self.assertEqual(out, ['Open Folder\u2026', 'Open File\u2026', '-', '~/work/beta',
+                               '-', 'Add Folder to Workspace\u2026', '-', 'Connect to Host\u2026', 'Attach to Container\u2026',
                                'project=~/work/alpha'])
         self.assertEqual(self.noted_folder(), self.beta.as_posix() + '\n')
 

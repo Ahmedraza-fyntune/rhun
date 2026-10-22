@@ -102,6 +102,7 @@ LIBC sys_unlink, _unlink, 32
 LIBC sys_access, _access, 32
 LIBC sys_readlink, _readlink
 LIBC sys_getpid, _getpid, 32
+LIBC sys_getuid, _getuid, 32    // the resources group's link relay folder (links.s)
 LIBC sys_kill, _kill, 32
 LIBC sys_ftruncate, _ftruncate, 32
 LIBC sys_lseek, _lseek
@@ -114,8 +115,31 @@ LIBC sys_setsid, _setsid, 32
 LIBC sys_chdir, _chdir, 32
 LIBC sys_execve, _execve, 32
 
+// The core only uses RLIMIT_NOFILE: Linux resource 7 is Darwin resource 8; both use
+// two uint64_t limits, and an infinite hard limit stays larger than our requested soft limit.
+sys_getrlimit:
+    cmp w0, #7
+    b.ne .Lrlimit_unknown
+    mov w0, #8
+    b sys_getrlimit_native
+sys_setrlimit:
+    cmp w0, #7
+    b.ne .Lrlimit_unknown
+    mov w0, #8
+    b sys_setrlimit_native
+.Lrlimit_unknown:
+    mov x0, #-L_ENOSYS
+    ret
+LIBC sys_getrlimit_native, _getrlimit, 32
+LIBC sys_setrlimit_native, _setrlimit, 32
+
 // vfork: a fork, as the child only reads memory before it execs (proc_spawn)
 LIBC sys_vfork, _fork, 32
+LIBC sys_fork, _fork, 32
+// the extension sandbox: sandbox_init(profile, flags, &errorbuf) -> 0 or -1
+LIBC sys_sandbox_init, _sandbox_init, 32
+// realpath(path, buf) -> buf, or 0 (the Linux side sees 0 as failure)
+LIBC sys_realpath, _realpath
 
 // wait4(pid, status, options, rusage): Darwin encodes the status alike; rusage is not filled
 sys_wait4:
@@ -487,9 +511,11 @@ sys_getdents64:
     ldr x25, [x9, w19, uxtw #3]
     str xzr, [x9, w19, uxtw #3]
     cbnz x25, 2f
+    bl ___error
+    str wzr, [x0]              // distinguish a readdir error from ordinary EOF
     mov x0, x23
     bl _readdir
-    cbz x0, 7f
+    cbz x0, .Ldent_eof
     mov x25, x0
 2:  ldrh w26, [x25, #18]        // d_namlen
     add x27, x26, #19 + 1 + 7   // header, name, NUL, rounded to 8
@@ -522,6 +548,15 @@ sys_getdents64:
     b 9f
 8:  mov x0, #-1
     bl linux_ret
+    b 9f
+.Ldent_eof:
+    bl ___error
+    ldr w0, [x0]
+    cbz w0, 7b
+    bl linux_errno
+    cmp w0, #4                // retry EINTR without discarding this batch
+    b.eq 1b
+    neg x0, x0
 9:  LEAVE
     ret
 
@@ -599,6 +634,8 @@ sys_socket:
 // sockaddr_mac(x1 Linux sockaddr, x9 buffer of 112) -> x1 Darwin sockaddr, w2 length
 sockaddr_mac:
     ldrh w10, [x1]
+    cmp w10, #2
+    b.eq 5f
     cmp w10, #1
     b.ne 9f
     mov w10, #0
@@ -618,6 +655,17 @@ sockaddr_mac:
     strb w13, [x9, #1]
     mov x1, x9
 9:  ret
+5:  // AF_INET (a debugger's TCP connection, forwarded ports): the same 16 bytes, but a length byte
+    // and a one-byte family
+    ldp x10, x11, [x1]
+    stp x10, x11, [x9]
+    mov w13, #16
+    strb w13, [x9]
+    mov w13, #2
+    strb w13, [x9, #1]
+    mov x1, x9
+    mov w2, #16
+    ret
 
 .macro SOCKADDR name, fn
 \name:
@@ -637,6 +685,29 @@ sockaddr_mac:
 .endm
 SOCKADDR sys_bind, _bind
 SOCKADDR sys_connect, _connect
+
+// getsockname(fd, addr, addrlen) and getpeername: the family back to Linux's 16 bits (AF_INET's
+// layout is otherwise the same)
+sys_getpeername:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x1, [sp, #16]
+    bl _getpeername
+    b 1f
+sys_getsockname:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x1, [sp, #16]
+    bl _getsockname
+1:
+    sxtw x0, w0
+    bl linux_ret
+    tbnz x0, #63, 9f
+    ldr x1, [sp, #16]
+    ldrb w9, [x1, #1]
+    strh w9, [x1]
+9:  ldp x29, x30, [sp], #32
+    ret
 
 // accept4(fd, addr, addrlen, flags): addresses are not reported
 sys_accept4:
@@ -685,6 +756,28 @@ sys_pipe2:
     mov x0, #0
 9:  ldp x29, x30, [sp], #32
     ret
+
+// socketpair(domain, type | flags, proto, sv): a remote window's channels (remote.s)
+sys_socketpair:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x1, x3, [sp, #16]
+    and w1, w1, #0xf
+    bl _socketpair
+    sxtw x0, w0
+    bl linux_ret
+    tbnz x0, #63, 9f
+    ldp x1, x9, [sp, #16]
+    ldr w0, [x9]
+    bl set_fl
+    ldp x1, x9, [sp, #16]
+    ldr w0, [x9, #4]
+    bl set_fl
+    mov x0, #0
+9:  ldp x29, x30, [sp], #32
+    ret
+
+LIBC sys_shutdown, _shutdown, 32
 
 // fcntl(fd, cmd, arg): the O_NONBLOCK and O_APPEND bits differ
 sys_fcntl:
@@ -798,8 +891,13 @@ sys_table:
     SYS 39, sys_getpid
     SYS 41, sys_socket
     SYS 42, sys_connect
+    SYS 48, sys_shutdown
     SYS 49, sys_bind
     SYS 50, sys_listen
+    SYS 51, sys_getsockname
+    SYS 52, sys_getpeername
+    SYS 53, sys_socketpair
+    SYS 57, sys_fork
     SYS 58, sys_vfork
     SYS 59, sys_execve
     SYS 60, sys_exit
@@ -816,7 +914,10 @@ sys_table:
     SYS 87, sys_unlink
     SYS 89, sys_readlink
     SYS 91, sys_fchmod
+    SYS 97, sys_getrlimit
+    SYS 102, sys_getuid
     SYS 112, sys_setsid
+    SYS 160, sys_setrlimit
     SYS 217, sys_getdents64
     SYS 228, sys_clock_gettime
     SYS 231, sys_exit
@@ -824,6 +925,8 @@ sys_table:
     SYS 255, sys_inotify_rm_watch
     SYS 257, sys_openat
     SYS 288, sys_accept4
+    SYS 290, sys_sandbox_init
+    SYS 291, sys_realpath
     SYS 293, sys_pipe2
     SYS 294, sys_inotify_init1
     .org sys_table + NSYS * 8

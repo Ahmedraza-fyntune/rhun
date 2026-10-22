@@ -7,7 +7,7 @@
 .bss
 .p2align 3
 .globl wb_starts, wb_rows
-wb_starts: .zero 4 * (MAXROWS + 1)     # byte offset of each row in the line, last = length
+wb_starts: .zero 4 * (MAXROWS + 66)    # byte offset of each row in the line, last = length (and up to 64 rows before it: lens.s)
 wb_rows: .long 0
 
 .text
@@ -56,8 +56,8 @@ FN break_text
     push rcx
     push rdx
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     pop rdx
     pop rcx
@@ -77,8 +77,14 @@ FN break_text
     pop rcx
     jmp 3f
 2:  mov eax, 1
-3:  # eax = width, edx = bytes
-    lea r8d, [r15 + rax]
+3:  # eax = width, edx = bytes; the inlays at its gap are glued to it (vtext.s)
+    cmp qword ptr [rip + bt_n], 0
+    je 31f
+    mov rdi, rcx
+    mov r8d, eax
+    call vt_bt_at
+    add eax, r8d
+31: lea r8d, [r15 + rax]
     cmp r8d, [rsp]
     jle 5f
     cmp rcx, r14
@@ -108,16 +114,50 @@ FN break_text
     EPILOGUE
 
 # line_breaks(doc, line) -> rows (wb_starts filled)
+# (a line a fold hides has no rows; without word wrap a line is one row: the view scrolls by rows
+# because of folds, fold.s; a line with code lenses has a lens row first, lens.s, g_wb_lens)
 FN line_breaks
     push rbx
-    call doc_line_text
-    mov rdi, rax
-    mov rsi, rdx
     push rdi
+    push rsi
+    mov dword ptr [rip + g_wb_lens], 0
+    call fold_hidden
+    test eax, eax
+    jnz 8f
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp]
+    call vt_bt_set              # its inlays count (vtext.s)
+    mov rdi, [rsp + 8]
+    mov rsi, [rsp]
+    call doc_line_text
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 7f
+    mov rbx, rax
+    push rdx
+    push rdx
     call wrap_cols
     mov edx, eax
-    pop rdi
+    pop rsi
+    pop rsi
+    mov rdi, rbx
     call break_text
+    jmp 6f
+7:  lea rax, [rip + wb_starts]
+    mov dword ptr [rax], 0
+    mov [rax + 4], edx
+    mov dword ptr [rip + wb_rows], 1
+    mov eax, 1
+6:  pop rsi
+    pop rdi
+    pop rbx
+    mov edx, eax
+    jmp lens_row_add            # a code lens row first (lens.s)
+8:  pop rsi
+    pop rdi
+    lea rax, [rip + wb_starts]
+    mov dword ptr [rax], 0
+    mov dword ptr [rip + wb_rows], 0
+    xor eax, eax
     pop rbx
     ret
 
@@ -141,6 +181,8 @@ FN pos_in_row
     mov r12, rsi
     mov r13d, edx
     mov [rsp], ecx
+    mov qword ptr [rip + g_vt_hit], 0
+    call vt_bt_set              # the line's inlays (vtext.s)
     mov rdi, rbx
     mov rsi, r12
     call doc_line_start
@@ -162,7 +204,7 @@ FN pos_in_row
 1:  xor ebx, ebx                # col
 .Lpr_ch:
     cmp ecx, r15d
-    jae .Lpr_done
+    jae .Lpr_end
     movzx eax, byte ptr [r14 + rcx]
     mov edx, 1
     cmp al, 9
@@ -171,8 +213,8 @@ FN pos_in_row
     push rcx
     push rdx
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     pop rdx
     pop rcx
@@ -191,7 +233,27 @@ FN pos_in_row
     pop rcx
     jmp 4f
 3:  mov eax, 1
-4:  # stop if the target column lies in this character (nearest edge)
+4:  # the inlays at its gap: the target on one of them is the gap
+    cmp qword ptr [rip + bt_n], 0
+    je 41f
+    push rax
+    push rdx
+    push rcx
+    push rcx
+    mov rdi, rcx
+    mov esi, [rsp + 32]
+    sub esi, ebx
+    call vt_bt_hit
+    mov r8d, edx
+    pop rcx
+    pop rcx
+    pop rdx
+    pop r9
+    add ebx, eax
+    test r8d, r8d
+    jnz .Lpr_done
+    mov eax, r9d
+41: # stop if the target column lies in this character (nearest edge)
     lea r8d, [rbx + rax]
     cmp r8d, [rsp]
     jle 5f
@@ -205,6 +267,21 @@ FN pos_in_row
 5:  mov ebx, r8d
     add ecx, edx
     jmp .Lpr_ch
+.Lpr_end:
+    # the row's end: on the last row, the inlays at the line's end (a fold's pill, vtext.s)
+    cmp qword ptr [rip + bt_n], 0
+    je .Lpr_done
+    lea edx, [r13 + 1]
+    cmp edx, [rip + wb_rows]
+    jb .Lpr_done
+    push rcx
+    push rcx
+    mov rdi, rcx
+    mov esi, [rsp + 16]
+    sub esi, ebx
+    call vt_bt_hit
+    pop rcx
+    pop rcx
 .Lpr_done:
     mov eax, ecx
     add rax, [rsp + 8]
@@ -231,8 +308,8 @@ FN seg_cols_from
     jne 2f
     mov eax, ebx
     xor edx, edx
-    div dword ptr [rip + cfg_tab_width]
-    mov eax, [rip + cfg_tab_width]
+    div dword ptr [rip + g_tab_width]
+    mov eax, [rip + g_tab_width]
     sub eax, edx
     add ebx, eax
     inc r13
@@ -284,11 +361,22 @@ FN cursor_row
     call doc_line_text
     lea rcx, [rip + wb_starts]
     mov esi, [rcx + r15*4]
+    mov r14d, esi
     mov rdi, rax
     mov rdx, r13
     call seg_cols
     mov ecx, eax
-    mov rax, r12
+    cmp qword ptr [rip + bt_n], 0
+    je 1f
+    push rcx
+    push rcx
+    mov edi, r14d               # and the inlays before the caret (vtext.s)
+    mov rsi, r13
+    call vt_bt_before
+    pop rcx
+    pop rcx
+    add ecx, eax
+1:  mov rax, r12
     mov edx, r15d
     EPILOGUE
 
@@ -387,7 +475,21 @@ FN wrap_clamp
     add r13, rax
     inc r12
     jmp 1b
-2:  # the end is above the bottom edge: put the last row there
+2:  # presentation: rows of ghost text below the last line are part of the end (ghost.s)
+    mov rdi, rbx
+    call ghost_rows_after
+    test eax, eax
+    jz 3f
+    imul eax, [rip + g_lh]
+    add r13, rax
+    cmp r13, r14
+    jge 9f
+    mov rsi, r13                # the end above the bottom edge: up by the gap
+    sub rsi, r14
+    mov rdi, rbx
+    call scroll_by_px
+    jmp 9f
+3:  # the end is above the bottom edge: put the last row there
     mov rsi, [rbx + DOC_nlines]
     dec rsi
     mov rdi, rbx
@@ -433,7 +535,10 @@ FN top_offset
 FN reveal_wrap
     PROLOGUE 16
     mov rbx, rdi
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 0f
     mov qword ptr [rbx + DOC_scrollx], 0
+0:
     mov rdi, rbx
     call cursor_row
     mov r12, rax                # cursor line
@@ -498,7 +603,10 @@ FN reveal_wrap
 FN center_wrap
     push rbx
     mov rbx, rdi
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    je 0f
     mov qword ptr [rbx + DOC_scrollx], 0
+0:
     call cursor_row
     mov rdi, rbx
     mov rsi, rax
@@ -551,9 +659,21 @@ FN wrap_pos_at
     xor edx, edx
     div dword ptr [rip + g_lh]
     mov r15d, eax               # row
+    xor ecx, ecx                # a row put before the text (ghost text's, a code lens's: lens.s)?
+    mov eax, [rip + g_wb_lens]
+    cmp r15d, eax
+    jae 22f
+    dec eax
+    cmp r15d, eax               # the last of them: the lens row, when there is one
+    jne 22f
+    mov ecx, 1
+22: mov [rsp + 4], ecx
     mov eax, [rsp]
     sub eax, [rip + g_ed_tx]
-    mov ecx, [rip + g_cw]
+    cmp dword ptr [rip + cfg_word_wrap], 0
+    jne 21f
+    add eax, [rbx + DOC_scrollx]    # rows because of folds: lines scroll sideways
+21: mov ecx, [rip + g_cw]
     shr ecx, 1
     add eax, ecx
     jns 3f
@@ -565,7 +685,15 @@ FN wrap_pos_at
     mov edx, r15d
     mov ecx, eax
     call pos_in_row
-    EPILOGUE
+    cmp dword ptr [rsp + 4], 0
+    je 4f
+    mov [rsp + 8], rax
+    mov rdi, rbx                # the lens item under the pointer becomes the hit (lens.s)
+    mov rsi, r12
+    mov edx, [rsp]
+    call lens_hit
+    mov rax, [rsp + 8]
+4:  EPILOGUE
 .Lwp_end:
     mov rdi, rbx
     call doc_len
@@ -588,23 +716,28 @@ FN wrap_move
     jae 1f
     mov edx, eax
     jmp .Lwm_go
-1:  lea rax, [r12 + 1]
+1:  lea rsi, [r12 + 1]
+    mov rdi, rbx
+    call fold_next_visible      # over folded lines (fold.s)
     cmp rax, [rbx + DOC_nlines]
     jae .Lwm_end
     mov r12, rax
     mov rdi, rbx
     mov rsi, r12
     call line_breaks
-    xor edx, edx
+    mov edx, [rip + g_wb_lens]  # its first text row: past a code lens row (lens.s)
     jmp .Lwm_go
 .Lwm_up:
-    test r13d, r13d
-    jz 2f
+    cmp r13d, [rip + g_wb_lens]
+    jbe 2f
     lea edx, [r13 - 1]
     jmp .Lwm_go
 2:  test r12, r12
     jz .Lwm_start
-    dec r12
+    lea rsi, [r12 - 1]
+    mov rdi, rbx
+    call fold_prev_visible
+    mov r12, rax
     mov rdi, rbx
     mov rsi, r12
     call line_breaks
@@ -621,6 +754,60 @@ FN wrap_move
 .Lwm_end:
     mov rdi, rbx
     call doc_len
+    EPILOGUE
+
+# wrap_xy(doc, pos) -> eax the caret's x from the text's left edge, edx the y of its row's top from
+# the view's top (inlays counted; for the headless print-xy)
+FN wrap_xy
+    PROLOGUE 16
+    mov rbx, rdi
+    mov r12, rsi
+    call doc_line_of
+    mov r13, rax                # line
+    mov rdi, rbx
+    call top_offset
+    neg eax
+    movsxd r14, eax             # y
+    mov r15, [rbx + DOC_scrolly]
+    shr r15, 8
+1:  cmp r15, r13
+    jae 2f
+    mov rdi, rbx
+    mov rsi, r15
+    call line_px
+    add r14, rax
+    inc r15
+    jmp 1b
+2:  mov rdi, rbx
+    mov rsi, r13
+    call doc_line_start
+    sub r12, rax                # offset in the line
+    mov rdi, rbx
+    mov rsi, r13
+    call line_breaks
+    mov edi, r12d
+    mov esi, eax
+    call row_of
+    mov r15d, eax
+    mov eax, r15d
+    imul eax, [rip + g_lh]
+    add r14, rax
+    mov rdi, rbx
+    mov rsi, r13
+    call doc_line_text
+    lea rcx, [rip + wb_starts]
+    mov esi, [rcx + r15*4]
+    mov [rsp], esi
+    mov rdi, rax
+    mov rdx, r12
+    call seg_cols
+    mov [rsp + 4], eax
+    mov edi, [rsp]
+    mov rsi, r12
+    call vt_bt_before
+    add eax, [rsp + 4]
+    imul eax, [rip + g_cw]
+    mov edx, r14d
     EPILOGUE
 
 FN cmd_toggle_word_wrap

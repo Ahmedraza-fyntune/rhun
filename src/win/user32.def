@@ -21,6 +21,7 @@ EXPORTS
     OpenClipboard
     PeekMessageW
     RegisterClassExW
+    RegisterClipboardFormatW
     ReleaseCapture
     ReleaseDC
     SetCapture
@@ -35,3 +36,5 @@ EXPORTS
     UpdateWindow
     MapVirtualKeyW
     LoadIconW
+    SendMessageW
+    DestroyWindow

@@ -32,21 +32,27 @@ EXPORTS
     GetExitCodeProcess
     GetFileAttributesW
     GetFileInformationByHandle
+    GetFileInformationByHandleEx
+    GetFileType
     GetFinalPathNameByHandleW
     GetLastError
     GetModuleFileNameW
     GetModuleHandleW
     GetStdHandle
     GetSystemTimeAsFileTime
+    QueryPerformanceCounter
+    QueryPerformanceFrequency
     GetTickCount64
     GlobalAlloc
     GlobalFree
     GlobalLock
+    GlobalSize
     GlobalUnlock
     InitializeProcThreadAttributeList
     LocalFree
     MoveFileExW
     MultiByteToWideChar
+    OpenProcess
     PeekNamedPipe
     ReadFile
     RemoveDirectoryW
@@ -55,11 +61,14 @@ EXPORTS
     ResumeThread
     SearchPathW
     SetCurrentDirectoryW
+    SetEndOfFile
     SetEnvironmentVariableW
     SetEvent
     SetFileAttributesW
     SetFilePointerEx
     SetInformationJobObject
+    SetNamedPipeHandleState
+    SetLastError
     Sleep
     TerminateJobObject
     TerminateProcess
@@ -70,6 +79,14 @@ EXPORTS
     WideCharToMultiByte
     WriteFile
     GetFullPathNameW
+    GetHandleInformation
     GetConsoleWindow
+    GetConsoleMode
     GetWindowsDirectoryW
     CompareStringOrdinal
+    OpenProcess
+    K32GetProcessMemoryInfo
+    QueryInformationJobObject
+    CreateNamedPipeW
+    ConnectNamedPipe
+    WaitNamedPipeW

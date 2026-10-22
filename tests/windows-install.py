@@ -2,6 +2,9 @@
 """Exercise the Windows installer against local, checksum-verified release fixtures."""
 import functools
 import hashlib
+import io
+import json
+import zipfile
 import http.server
 import os
 from pathlib import Path
@@ -114,6 +117,26 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
         print('ok   install/documented-command', flush=True)
         install()  # latest lookup and first install, including a Unicode destination
         version()
+        notice=(ROOT/'assets/licenses/LICENSE-Unicode.txt').read_bytes()
+        assert (destination/'LICENSE-Unicode.txt').read_bytes()==notice
+        # Legacy archives can omit the separate notice; LICENSE still carries it.
+        original_archive=(release/ASSET).read_bytes()
+        for variant in ('legacy','duplicate'):
+            with zipfile.ZipFile(io.BytesIO(original_archive)) as old:
+                entries=[(entry.filename,old.read(entry)) for entry in old.infolist() if not entry.filename.endswith('/LICENSE-Unicode.txt')]
+            if variant=='duplicate':entries += [(f'rhun-{VERSION}/LICENSE-Unicode.txt',notice)]*2
+            with zipfile.ZipFile(release/ASSET,'w') as archive:
+                for name,data in entries:archive.writestr(name,data)
+            variant_digest=hashlib.sha256((release/ASSET).read_bytes()).hexdigest()
+            checksums.write_text(f'{variant_digest}  {ASSET}\n')
+            legacy=temp/variant/'rhun'
+            install(target=legacy,success=variant=='legacy')
+            if variant=='legacy':
+                assert not (legacy/'LICENSE-Unicode.txt').exists()
+                assert (legacy/'LICENSE').read_bytes().endswith(notice)
+                install('-Uninstall',target=legacy)
+            else:assert not (legacy/'rhun.exe').exists()
+        (release/ASSET).write_bytes(original_archive);checksums.write_text(f'{digest}  {ASSET}\n')
         assert (destination / '.rhun-install').is_file()
         assert 'file-associations: no' in (destination / '.rhun-install').read_text()
         install_while_stage_held('-Version', VERSION, ready='.rhun-install')
@@ -173,12 +196,29 @@ with tempfile.TemporaryDirectory(prefix='rhun-installer-') as temporary:
             assert (destination / 'rhun.exe').read_bytes() == old
             assert unrelated.read_bytes() == b'keep this'
             assert (staged / 'update.json').is_file()
+            receipt=json.loads((staged/'update.json').read_text(encoding='utf-8-sig'))
+            assert receipt['hashes']['LICENSE-Unicode.txt'].lower()==hashlib.sha256(notice).hexdigest()
+            assert (staged/'LICENSE-Unicode.txt').read_bytes()==notice
             install(*options, '-PrepareUpdate', success=False)
             assert (staged / 'update.json').is_file()
             print('ok   update/prepare-while-running-and-preserve-portable-files', flush=True)
         finally:
             process.kill()
             process.wait()
+        # Notice presence and its recorded hash must agree before any application file changes.
+        notice_path=staged/'LICENSE-Unicode.txt';notice_path.unlink()
+        install(*options,'-ApplyUpdate',success=False)
+        assert (destination/'rhun.exe').read_bytes()==old
+        notice_path.write_bytes(notice)
+        receipt_path=staged/'update.json';receipt_bytes=receipt_path.read_bytes()
+        receipt=json.loads(receipt_bytes.decode('utf-8-sig'));del receipt['hashes']['LICENSE-Unicode.txt']
+        receipt_path.write_text(json.dumps(receipt),encoding='utf-8-sig')
+        install(*options,'-ApplyUpdate',success=False)
+        assert (destination/'rhun.exe').read_bytes()==old
+        receipt_path.write_bytes(receipt_bytes);notice_path.write_bytes(b'tampered')
+        install(*options,'-ApplyUpdate',success=False)
+        assert (destination/'rhun.exe').read_bytes()==old
+        notice_path.write_bytes(notice)
         # A tampered stage must fail before changing the old editor.
         staged_license = staged / 'LICENSE'
         license_bytes = staged_license.read_bytes()

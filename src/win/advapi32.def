@@ -1,3 +1,9 @@
 LIBRARY advapi32.dll
 EXPORTS
     RegGetValueW
+    CredWriteW
+    CredReadW
+    CredDeleteW
+    CredEnumerateW
+    CredFree
+    ConvertStringSecurityDescriptorToSecurityDescriptorW

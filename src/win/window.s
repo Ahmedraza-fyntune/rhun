@@ -2,16 +2,23 @@
 .include "win.inc"
 .bss
 .p2align 4
+.globl win_hwnd, win_clip_depth, win_deferred_count, win_deferred_overflow
 win_hwnd: .quad 0
+win_clip_depth: .quad 0
+win_deferred_count: .quad 0
+win_deferred_overflow: .quad 0
+win_deferred_head: .quad 0
+win_pumping: .quad 0
+win_deferred: .zero WD_CAP * WD_SIZE
 win_pixels: .quad 0
 win_capacity: .quad 0
 win_width: .long 0
 win_height: .long 0
 win_surrogate: .long 0
+win_drop_char: .long 0          # a chord's second stroke went as WM_KEYDOWN: drop its WM_CHAR
 win_cursor: .quad 0
 win_class: .zero 80
 win_bmi: .zero 44
-win_message: .zero 48
 wheel_rem: .long 0, 0       # half a pixel left from the wheel, vertical and horizontal
 .text
 
@@ -190,7 +197,7 @@ win_title:
 9:  EPILOGUE
 
 # Clipboard managers can hold the clipboard briefly after a content change.
-win_clip_open:
+FN win_clip_open
     PROLOGUE 64
     mov ebx, 20
 1:  mov rcx, [rip + win_hwnd]
@@ -204,8 +211,24 @@ win_clip_open:
     jmp 1b
 9:  EPILOGUE
 
-win_clip_set:
-    PROLOGUE 96
+FN win_clip_set
+    PROLOGUE 112
+    mov qword ptr [rsp + 80], 0
+    mov qword ptr [rsp + 88], 0
+    # CF_UNICODETEXT ends at NUL; never accept a truncated counted input.
+    xor ecx, ecx
+0:  cmp rcx, rsi
+    jae 9721f
+    cmp byte ptr [rdi + rcx], 0
+    je 9f
+    inc rcx
+    jmp 0b
+9721: cmp qword ptr [rip + win_hwnd], 0
+    je 9f
+    inc qword ptr [rip + win_clip_depth]
+    mov qword ptr [rsp + 88], 1
+    mov rax, [rip + win_deferred_overflow]
+    mov [rsp + 96], rax
     # Copy a counted UTF-8 string before conversion; embedded editor buffers are not NUL terminated.
     call mem_dup
     mov rbx, rax
@@ -247,6 +270,7 @@ win_clip_set:
     API SetClipboardData
     test rax, rax
     jz 6f
+    mov qword ptr [rsp + 80], 1
     xor r13d, r13d
 6:  API CloseClipboard
 7:  test r13, r13
@@ -255,40 +279,79 @@ win_clip_set:
     API GlobalFree
 8:  mov rdi, r12
     call mem_free
-9:  EPILOGUE
+9:  cmp qword ptr [rsp + 88], 0
+    je 10f
+    dec qword ptr [rip + win_clip_depth]
+    mov rax, [rip + win_deferred_overflow]
+    cmp rax, [rsp + 96]
+    je 10f
+    mov qword ptr [rsp + 80], 0
+10: mov eax, [rsp + 80]
+    EPILOGUE
 
-win_clip_get:
-    PROLOGUE 96
+FN win_clip_get
+    PROLOGUE 128
+    mov rax, [rip + app_clip_active_token]
+    mov [rsp + 104], rax
+    xor r12d, r12d
+    xor r13d, r13d
+    mov qword ptr [rsp + 112], 0
+    inc qword ptr [rip + win_clip_depth]
+    mov rax, [rip + win_deferred_overflow]
+    mov [rsp + 96], rax
+    call win_clip_format
+    mov ebx, eax
     call win_clip_open
     test eax, eax
     jz 9f
+    test ebx, ebx
+    jz 7f
+    mov ecx, ebx
+    API GetClipboardData
+    mov rdi, rax
+    call win_clip_read_native_handle
+    test rax, rax
+    jz 7f
+    mov r12, rax
+    mov r13, rdx
+    mov qword ptr [rsp + 112], 1
+    jmp 8f
+7:
     mov ecx, 13
     API GetClipboardData
     test rax, rax
     jz 8f
-    mov rbx, rax
-    mov rcx, rax
-    API GlobalLock
-    test rax, rax
-    jz 8f
     mov rdi, rax
-    call win_utf8
+    mov esi, DOC_MULTI_BYTES_MAX
+    call win_clip_read_handle
     mov r12, rax
-    mov rcx, rbx
-    API GlobalUnlock
-    API CloseClipboard
-    test r12, r12
-    jz 9f
-    mov rdi, r12
-    call strlen
-    mov rdi, r12
-    mov rsi, rax
-    call app_on_paste
-    mov rdi, r12
-    call mem_free
-    EPILOGUE
+    mov r13, rdx
 8:  API CloseClipboard
-9:  EPILOGUE
+9:  dec qword ptr [rip + win_clip_depth]
+    test r12, r12
+    jz 12f
+    mov rax, [rip + win_deferred_overflow]
+    cmp rax, [rsp + 96]
+    jne 12f
+    mov rdi, [rsp + 104]
+    mov rsi, r12
+    mov rdx, r13
+    cmp qword ptr [rsp + 112], 0
+    je 13f
+    call app_clip_complete_native
+    jmp 10f
+13:
+    mov ecx, 1
+    call app_clip_complete
+    jmp 10f
+12: mov rdi, [rsp + 104]
+    xor esi, esi
+    xor edx, edx
+    xor ecx, ecx
+    call app_clip_complete
+10: mov rdi, r12
+    call mem_free
+11: EPILOGUE
 
 win_set_cursor:
     PROLOGUE 96
@@ -350,14 +413,135 @@ FN win_mods
 4:  mov eax, ebx
     EPILOGUE
 
-# the window procedure (tests/windows/wheel_test.s sends it messages)
+# Queue only messages whose handlers enter application code. Capture borrowed payloads now.
+# (HWND, message, WPARAM, LPARAM) -> 1 intercepted, 0 native-only message.
+FN win_deferred_push
+    PROLOGUE 96
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13, rdx
+    mov r14, rcx
+    cmp esi, 0x10
+    je .Ldefer_yes
+    cmp esi, 5
+    je .Ldefer_yes
+    cmp esi, 6
+    je .Ldefer_yes
+    cmp esi, 0x1a
+    je .Ldefer_yes
+    cmp esi, 0x2e0
+    je .Ldefer_yes
+    cmp esi, 0x200
+    jb .Ldefer_keys
+    cmp esi, 0x20a
+    jbe .Ldefer_yes
+    cmp esi, 0x20e
+    je .Ldefer_yes
+.Ldefer_keys:
+    cmp esi, 0x100
+    je .Ldefer_yes
+    cmp esi, 0x102
+    je .Ldefer_yes
+    cmp esi, 0x104
+    je .Ldefer_yes
+    cmp esi, 0x106
+    je .Ldefer_yes
+    xor eax, eax
+    EPILOGUE
+.Ldefer_yes:
+    mov rax, [rip + win_deferred_count]
+    cmp rax, WD_CAP
+    jae .Ldefer_full
+    add rax, [rip + win_deferred_head]
+    and eax, WD_CAP - 1
+    shl rax, 6
+    lea r15, [rip + win_deferred]
+    add r15, rax
+    mov rdi, r15
+    xor esi, esi
+    mov edx, WD_SIZE
+    call memset
+    mov [r15 + WD_hwnd], rbx
+    mov [r15 + WD_message], r12d
+    mov [r15 + WD_wparam], r13
+    mov [r15 + WD_lparam], r14
+    call win_mods
+    mov [r15 + WD_mods], eax
+    cmp r12d, 0x1a
+    jne 1f
+    mov qword ptr [r15 + WD_lparam], 0
+1:  cmp r12d, 0x2e0
+    jne 2f
+    mov rdi, r15
+    add rdi, WD_rect
+    mov rsi, r14
+    mov edx, 16
+    call memcpy
+    lea rax, [r15 + WD_rect]
+    mov [r15 + WD_lparam], rax
+2:  inc qword ptr [rip + win_deferred_count]
+    mov eax, 1
+    EPILOGUE
+.Ldefer_full:
+    inc qword ptr [rip + win_deferred_overflow]
+    mov eax, 1
+    EPILOGUE
+
+# Pop into a caller-owned stable record. Never expose a ring slot across a callback.
+FN win_deferred_pop
+    PROLOGUE 96
+    cmp qword ptr [rip + win_clip_depth], 0
+    jne 9f
+    cmp qword ptr [rip + win_deferred_count], 0
+    je 9f
+    mov rbx, rdi
+    mov rax, [rip + win_deferred_head]
+    shl rax, 6
+    lea rsi, [rip + win_deferred]
+    add rsi, rax
+    mov edx, WD_SIZE
+    call memcpy
+    cmp dword ptr [rbx + WD_message], 0x2e0
+    jne 1f
+    lea rax, [rbx + WD_rect]
+    mov [rbx + WD_lparam], rax
+1:  inc qword ptr [rip + win_deferred_head]
+    and qword ptr [rip + win_deferred_head], WD_CAP - 1
+    dec qword ptr [rip + win_deferred_count]
+    mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# Native callbacks always query current modifiers, including callbacks nested inside replay.
 .globl win_wndproc
 win_wndproc:
+    mov r10d, -1
+    jmp .Lwndproc_enter
+# Private replay carries the enqueue-time modifier snapshot in r10d.
+win_wndproc_deferred:
+.Lwndproc_enter:
     CALLBACK 96
+    mov [rsp + 176], r10d
     mov rbx, rcx
     mov r12d, edx
     mov r13, r8
     mov r14, r9
+    test r10d, r10d
+    jns .Lwm_dispatch
+    cmp qword ptr [rip + win_clip_depth], 0
+    jne 1f
+    cmp qword ptr [rip + win_deferred_count], 0
+    je .Lwm_dispatch
+1:  mov rdi, rbx
+    mov esi, r12d
+    mov rdx, r13
+    mov rcx, r14
+    call win_deferred_push
+    test eax, eax
+    jnz .Lwm_zero
+.Lwm_dispatch:
+    mov edx, r12d
     cmp edx, 0x10
     je .Lwm_close
     cmp edx, 5
@@ -406,7 +590,7 @@ win_wndproc:
 .Lwm_setting:
     # WM_SETTINGCHANGE: the system's dark mode among others
     call win_setting_changed
-    jmp .Lwm_default
+    jmp .Lwm_zero
 .Lwm_size:
     cmp r13d, 1
     je .Lwm_zero
@@ -473,7 +657,11 @@ win_wndproc:
     shr rax, 16
     movsx esi, ax
     call app_on_motion
+    mov eax, [rsp + 176]
+    test eax, eax
+    jns 8f
     call win_mods
+8:
     mov r15d, eax
     mov edi, BTN_LEFT
     cmp r12d, 0x204
@@ -504,7 +692,11 @@ win_wndproc:
     call app_on_button
     jmp .Lwm_zero
 .Lwm_scroll:
+    mov eax, [rsp + 176]
+    test eax, eax
+    jns 8f
     call win_mods
+8:
     mov edx, eax
     # 120 a notch scrolls 60 px. A precision touchpad sends smaller steps: what falls short of a
     # pixel carries to the next message, so they add up and both directions round alike.
@@ -549,7 +741,16 @@ win_wndproc:
     shl eax, 10
     lea r13d, [rax + r13 - 0xdc00 + 0x10000]
 3:  mov dword ptr [rip + win_surrogate], 0
+    # a chord's second stroke already went as WM_KEYDOWN: its character is dropped
+    cmp dword ptr [rip + win_drop_char], 0
+    je 4f
+    mov dword ptr [rip + win_drop_char], 0
+    jmp .Lwm_zero
+4:  mov eax, [rsp + 176]
+    test eax, eax
+    jns 8f
     call win_mods
+8:
     test eax, MOD_CTRL | MOD_ALT
     jnz .Lwm_zero
     mov edx, eax
@@ -558,7 +759,26 @@ win_wndproc:
     call app_on_key
     jmp .Lwm_zero
 .Lwm_keydown:
+    mov dword ptr [rip + win_drop_char], 0
+    # the key's US position for bindings on any layout (g_key_latin): letters and digits
+    xor eax, eax
+    mov ecx, r13d
+    cmp ecx, '0'
+    jb 7f
+    cmp ecx, '9'
+    jbe 6f
+    cmp ecx, 'A'
+    jb 7f
+    cmp ecx, 'Z'
+    ja 7f
+    add ecx, 32
+6:  mov eax, ecx
+7:  mov [rip + g_key_latin], eax
+    mov eax, [rsp + 176]
+    test eax, eax
+    jns 8f
     call win_mods
+8:
     mov r15d, eax
     test eax, MOD_ALT
     jz 9f
@@ -576,8 +796,16 @@ win_wndproc:
     inc ecx
     jmp 1b
 2:  test r15d, MOD_CTRL | MOD_ALT
+    jnz 21f
+    # a chord waits for its second stroke (keys.s): the key goes to rhun now, its WM_CHAR is dropped
+    call keys_chord_pending
+    test eax, eax
     jz .Lwm_default
-    mov ecx, r13d
+    mov dword ptr [rip + win_drop_char], 1
+    mov edi, [rip + g_key_latin]
+    test edi, edi
+    jnz 3f
+21: mov ecx, r13d
     mov edx, 2
     API MapVirtualKeyW
     and eax, 0x7fffffff
@@ -592,40 +820,77 @@ win_wndproc:
 3:  mov esi, edi                # the terminal derives Ctrl+C and other control bytes from cp
     mov edx, r15d
     call app_on_key
+    mov dword ptr [rip + g_key_latin], 0
     jmp .Lwm_zero
 4:  mov edi, [rdx + rcx*8 + 4]
     xor esi, esi
     mov edx, r15d
     call app_on_key
 .Lwm_zero:
+    mov dword ptr [rip + g_key_latin], 0
     xor eax, eax
 .Lwm_ret:
     CALLBACK_END 96
 
 # Process the queue from the GUI thread, including input already queued before waiting.
 FN win_messages
-    PROLOGUE 96
-1:  lea rcx, [rip + win_message]
+    PROLOGUE 224
+    cmp qword ptr [rip + win_clip_depth], 0
+    jne .Lmessages_ret
+    cmp qword ptr [rip + win_pumping], 0
+    jne .Lmessages_ret
+    mov qword ptr [rip + win_pumping], 1
+    mov qword ptr [rsp + 208], 0  # native MSG pending; deferred 96..159, native 160..207
+.Lmessages_next:
+    lea rdi, [rsp + 96]
+    call win_deferred_pop
+    test eax, eax
+    jz .Lmessages_native
+    mov rcx, [rsp + 96 + WD_hwnd]
+    test rcx, rcx
+    jz .Lmessages_next
+    cmp rcx, [rip + win_hwnd]
+    jne .Lmessages_next
+    mov edx, [rsp + 96 + WD_message]
+    mov r8, [rsp + 96 + WD_wparam]
+    mov r9, [rsp + 96 + WD_lparam]
+    mov r10d, [rsp + 96 + WD_mods]
+    call win_wndproc_deferred
+    jmp .Lmessages_next
+.Lmessages_native:
+    cmp qword ptr [rsp + 208], 0
+    jne .Lmessages_dispatch
+    lea rcx, [rsp + 160]
     xor edx, edx
     xor r8d, r8d
     xor r9d, r9d
     mov qword ptr [rsp + 32], 1
     API PeekMessageW
     test eax, eax
-    jz 9f
-    cmp dword ptr [rip + win_message + 8], 0x12
+    jz .Lmessages_empty
+    mov qword ptr [rsp + 208], 1
+    jmp .Lmessages_next
+.Lmessages_dispatch:
+    mov qword ptr [rsp + 208], 0
+    cmp dword ptr [rsp + 160 + WD_message], 0x12
     jne 2f
     mov dword ptr [rip + g_quit], 1
-    jmp 9f
-2:  lea rcx, [rip + win_message]
+    jmp .Lmessages_done
+2:  lea rcx, [rsp + 160]
     API TranslateMessage
-    lea rcx, [rip + win_message]
+    lea rcx, [rsp + 160]
     API DispatchMessageW
-    jmp 1b
-9:  EPILOGUE
+    jmp .Lmessages_next
+.Lmessages_empty:
+    cmp qword ptr [rip + win_deferred_count], 0
+    jne .Lmessages_next
+.Lmessages_done:
+    mov qword ptr [rip + win_pumping], 0
+.Lmessages_ret:
+    EPILOGUE
 
-# Poll never hands the descriptor set to a 64-handle Windows wait. Pipe/PTY readiness is
-# sampled at 10 ms, directory notifications at 100 ms; messages wake either wait immediately.
+# Poll never hands the descriptor set to a 64-handle Windows wait. Pipe/PTY and socket readiness
+# is sampled at 10 ms, directory notifications at 100 ms; messages wake either wait immediately.
 FN ws_poll
     PROLOGUE 112
     mov r12, rdi
@@ -648,8 +913,12 @@ FN ws_poll
     jz .Lpoll_next
     cmp dword ptr [rax + FD_kind], FD_WATCH
     je .Lpoll_watch
+    cmp dword ptr [rax + FD_kind], FD_CHAN
+    je .Lpoll_chan
+    cmp dword ptr [rax + FD_kind], WSK_KIND
+    je .Lpoll_sock
     cmp dword ptr [rax + FD_kind], FD_PIPE
-    je .Lpoll_pipe
+    je .Lpoll_pipe_kind
     cmp dword ptr [rax + FD_kind], FD_PTY
     jne .Lpoll_ready
     test word ptr [r12 + rbx*8 + 4], POLLOUT
@@ -680,6 +949,38 @@ FN ws_poll
     jmp .Lpoll_next
 .Lpoll_hup:
     or word ptr [r12 + rbx*8 + 6], POLLHUP
+    jmp .Lpoll_next
+.Lpoll_pipe_kind:
+    cmp dword ptr [rax + FD_wend], 0
+    je .Lpoll_pipe
+    # a write end cannot be peeked: it is writable unless the last write found it full less than
+    # 10 ms ago (a broken pipe shows as EPIPE on the next write)
+    test word ptr [r12 + rbx*8 + 4], POLLOUT
+    jz .Lpoll_next
+    cmp qword ptr [rax + FD_full], 0
+    je 1f
+    mov [rsp + 88], rax
+    mov qword ptr [rsp + 96], 10
+    API GetTickCount64
+    mov rcx, [rsp + 88]
+    sub rax, [rcx + FD_full]
+    cmp rax, 10
+    jb .Lpoll_next
+1:  or word ptr [r12 + rbx*8 + 6], POLLOUT
+    jmp .Lpoll_next
+.Lpoll_chan:
+    mov rdi, rax
+    movzx esi, word ptr [r12 + rbx*8 + 4]
+    call win_chan_events
+    mov [r12 + rbx*8 + 6], ax
+    jmp .Lpoll_next
+.Lpoll_sock:
+    # a socket (sock.s): sampled every 10 ms, as pipes are
+    mov qword ptr [rsp + 96], 10
+    mov rdi, rax
+    movzx esi, word ptr [r12 + rbx*8 + 4]
+    call win_sock_events
+    mov [r12 + rbx*8 + 6], ax
     jmp .Lpoll_next
 .Lpoll_watch:
     call win_watch_ready
@@ -761,29 +1062,6 @@ FN win_open_link
 8:  call desktop_failed
 9:  EPILOGUE
 
-# win_new_window(): launch a new rhun instance with --empty
-FN win_new_window
-    PROLOGUE 8320
-    xor ecx, ecx
-    lea rdx, [rsp + 96]
-    mov r8d, 4096
-    API GetModuleFileNameW
-    test eax, eax
-    jz 8f
-    cmp eax, 4096
-    jae 8f
-    mov rcx, [rip + win_hwnd]
-    lea rdx, [rip + .Lopen]
-    lea r8, [rsp + 96]
-    lea r9, [rip + .Lwin_empty_param]
-    mov qword ptr [rsp + 32], 0
-    mov qword ptr [rsp + 40], 1
-    API ShellExecuteW
-    cmp rax, 32
-    ja 9f
-8:  call desktop_failed
-9:  EPILOGUE
-
 # Select files and directories in their parent folder, with Unicode paths intact.
 FN win_reveal
     PROLOGUE 96
@@ -831,10 +1109,10 @@ FN win_reveal
 win_platform:
     .quad win_nop,win_timeout,win_nop,win_draw,win_set_cursor,win_clip_set,win_clip_get
     .quad win_nop,win_nop,win_minimize,win_maximize,win_title,win_nop
+    .quad win_clip_write
 .Lclass: .short 'r','h','u','n','W','i','n','d','o','w',0
 .Ltitle: .short 'r','h','u','n',0
 .Lopen: .short 'o','p','e','n',0
-.Lwin_empty_param: .short '-','-','e','m','p','t','y',0
 .Ldpi96: .float 96.0
 .Lcursors: .long 32512,32513,32649,32644,32645,32642,32643
 .Lkeys:

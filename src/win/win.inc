@@ -44,6 +44,8 @@
 .equ FD_flags, 20
 .equ FD_path, 24
 .equ FD_aux, 32
+.equ FD_wend, 40                # a pipe's write end (rhun writes, the child reads)
+.equ FD_full, 48                # GetTickCount64 when a non-blocking write last found it full
 .equ FD_SIZE, 64
 .equ FD_MAX, 1024
 .equ FD_FILE, 1
@@ -52,3 +54,15 @@
 .equ FD_PTY, 4
 .equ FD_SLAVE, 5
 .equ FD_WATCH, 6
+.equ FD_CHAN, 7                 # one end of a socketpair (chan.s; remote windows)
+.equ WSK_KIND, 8                # a Winsock socket (sock.s; debug adapters over TCP, forwarded ports)
+
+# Private deferred window events. Metadata occupies the unused MSG time/point fields.
+.equ WD_hwnd, 0
+.equ WD_message, 8
+.equ WD_wparam, 16
+.equ WD_lparam, 24
+.equ WD_mods, 32
+.equ WD_rect, 48
+.equ WD_SIZE, 64
+.equ WD_CAP, 256

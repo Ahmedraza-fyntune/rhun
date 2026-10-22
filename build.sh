@@ -8,13 +8,24 @@ ASFLAGS="--64 -I src -I build"
 [ "$1" = release ] || ASFLAGS="$ASFLAGS -g"
 tools/gen-assets.sh > build/assets.s.new
 cmp -s build/assets.s.new build/assets.s || { mv build/assets.s.new build/assets.s; rm -f build/obj/build_assets.o; }
+# incs(file): the files under src it includes, directly or through another include
+incs() {
+    for i in $(sed -n 's/^[[:space:]]*\.include[[:space:]]*"\([^"]*\)".*/\1/p' "$1"); do
+        [ -f "src/$i" ] || continue
+        echo "src/$i"
+        incs "src/$i"
+    done
+}
 objs=""
 for s in $(find src -name "*.s" ! -path "src/mac/*" ! -path "src/win/*" | LC_ALL=C sort) build/assets.s; do
     o=build/obj/$(echo "$s" | sed 's|/|_|g; s|\.s$|.o|')
     stale=
     # assets.s only names the embedded files; their contents count too
     [ "$s" = build/assets.s ] && [ -f "$o" ] && [ -n "$(find runtime assets/fonts -newer "$o" -print -quit)" ] && stale=1
-    if [ -n "$stale" ] || [ ! -f "$o" ] || [ "$s" -nt "$o" ] || [ src/rhun.inc -nt "$o" ]; then
+    for h in src/rhun.inc $(incs "$s"); do
+        [ "$h" -nt "$o" ] && stale=1
+    done
+    if [ -n "$stale" ] || [ ! -f "$o" ] || [ "$s" -nt "$o" ]; then
         as $ASFLAGS -o "$o" "$s"
     fi
     objs="$objs $o"
@@ -28,5 +39,11 @@ if [ "$1" = test ]; then
         n=$(basename "$t" .s)
         as $ASFLAGS -o "build/obj/test_$n.o" "$t"
         ld $LDFLAGS -o "build/$n" "build/obj/test_$n.o" $lib
+    done
+    for t in tests/linux/*.s; do
+        [ -f "$t" ] || continue
+        n=$(basename "$t" .s)
+        as $ASFLAGS -o "build/obj/test_linux_$n.o" "$t"
+        ld $LDFLAGS -o "build/$n" "build/obj/test_linux_$n.o" $lib
     done
 fi

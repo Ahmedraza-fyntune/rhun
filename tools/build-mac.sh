@@ -1,7 +1,7 @@
 #!/bin/sh
 # macOS on Apple silicon: tools/arm64.py translates the x86-64 sources to AArch64, src/mac holds
 # the native parts (entry, Linux system calls on libSystem, the AppKit window)
-# usage: tools/build-mac.sh [release|test]
+# usage: tools/build-mac.sh [release|test]   (RHUN_JOBS=N caps parallel translations; default: all CPUs)
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p build/obj build/a64
@@ -18,6 +18,14 @@ stale() {
     return 1
 }
 name() { echo "$1" | sed 's|/|_|g; s|\.s$||'; }
+# incs(file): the files under src it includes, directly or through another include
+incs() {
+    for i in $(sed -n 's/^[[:space:]]*\.include[[:space:]]*"\([^"]*\)".*/\1/p' "$1"); do
+        [ -f "src/$i" ] || continue
+        echo "src/$i"
+        incs "src/$i"
+    done
+}
 
 # translated sources: everything but the Linux entry and display servers
 x86=$(find src -name '*.s' ! -path 'src/mac/*' ! -path 'src/win/*' ! -path src/start.s ! -path src/plat/wayland.s ! -path src/plat/x11.s ! -path src/plat/appearance.s | LC_ALL=C sort)
@@ -26,14 +34,14 @@ todo=
 objs=
 for s in $x86 build/assets.s; do
     o=build/obj/$(name "$s").o
-    if stale "$o" "$s" src/rhun.inc tools/arm64.py ||
+    if stale "$o" "$s" src/rhun.inc tools/arm64.py $(incs "$s") ||
         { [ "$s" = build/assets.s ] && [ -n "$(find runtime assets/fonts -newer "$o" -print -quit)" ]; }; then
         todo="$todo $s"
     fi
     case $s in tests/*) ;; *) objs="$objs $o" ;; esac
 done
 if [ -n "$todo" ]; then
-    printf '%s\n' $todo | xargs -P "$(sysctl -n hw.ncpu)" -n 1 sh -c '
+    printf '%s\n' $todo | xargs -P "${RHUN_JOBS:-$(sysctl -n hw.ncpu)}" -n 1 sh -c '
         n=$(echo "$1" | sed "s|/|_|g; s|\.s$||")
         python3 tools/arm64.py -I src -D MACOS "$1" "build/a64/$n.s" &&
         as '"$ASFLAGS"' -o "build/obj/$n.o" "build/a64/$n.s"' sh
@@ -44,7 +52,7 @@ for s in src/mac/*.s; do
     objs="$objs $o"
 done
 
-LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices -framework Carbon"
+LIBS="-framework AppKit -framework QuartzCore -framework IOSurface -framework CoreServices -framework Carbon -framework Security"
 link() { # out objs...
     out=$1; shift
     clang -arch arm64 -mmacosx-version-min=$MINOS -o "$out" "$@" $LIBS
@@ -66,5 +74,19 @@ if [ "$1" = test ]; then
     for t in tests/*.s; do
         n=$(basename "$t" .s)
         link "build/$n" build/obj/tests_$n.o $lib
+    done
+    for t in tests/mac/*.s; do
+        [ -f "$t" ] || continue
+        n=mac_$(basename "$t" .s)
+        o=build/obj/tests_$n.o
+        as $ASFLAGS -I src/mac -o "$o" "$t"
+        helper="${t%_test.s}_helper.m"
+        if [ -f "$helper" ]; then
+            h=build/obj/tests_${n}_helper.o
+            clang $ASFLAGS -fobjc-arc -Wall -Wextra -Werror -c "$helper" -o "$h"
+            link "build/$n" "$o" "$h" $lib
+        else
+            link "build/$n" "$o" $lib
+        fi
     done
 fi

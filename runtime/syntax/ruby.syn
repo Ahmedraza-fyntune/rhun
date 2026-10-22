@@ -12,3 +12,6 @@ captypes = yes
 keywords = alias and begin break case class def defined? do else elsif end ensure for if in module next not or redo rescue retry return self super then undef unless until when while yield __method__ require require_relative include extend attr_reader attr_writer attr_accessor private protected public lambda proc
 constants = true false nil
 builtins = puts print p pp raise loop
+indent_open = ^if ^unless ^while ^until ^case ^begin ^def ^class ^module ^for do { ( [
+indent_close = end } ) ]
+indent_middle = else elsif when rescue ensure

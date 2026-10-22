@@ -41,6 +41,8 @@ v_sdir: .long 1                 # direction of the last search; n follows it
 .bss
 .p2align 3
 .globl g_vim_mode, g_vim_cmdline
+.globl v_count, v_opcount, v_op, v_prefix, v_chgdoc, v_chglen, v_buf   # vimmulti.s
+.globl vcmd, vclamp, vesc_one, vput_text
 g_vim_mode: .long 0
 g_vim_cmdline: .long 0          # the key that opened the command line (: / ?), 0 when closed
 v_on: .long 0                   # cfg_vim when last applied
@@ -712,9 +714,22 @@ vesc_insert:
     call vfeed_edit
     jmp 2b
 3:  mov dword ptr [rip + g_vim_mode], VM_NORMAL
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne 5f
+    call vesc_one
+    jmp 6f
+5:  call vm_esc                 # several cursors: each steps back (vimmulti.s)
+6:  mov dword ptr [rip + v_autoind], 0
+    call vcommit
+    EPILOGUE
+
+# vesc_one(): Esc's caret (the primary): an indentation o O cc S gave that nothing was typed on
+# goes, and the caret steps back onto a character
+vesc_one:
+    PROLOGUE
+    mov rbx, [rip + g_doc]
     cmp dword ptr [rip + v_autoind], 0
     je 31f
-    mov dword ptr [rip + v_autoind], 0
     mov rdi, [rbx + DOC_cur]
     call vline
     mov r13, rax
@@ -751,7 +766,6 @@ vesc_insert:
     mov r12, rax
 4:  mov rdi, r12
     call vset
-    call vcommit
     EPILOGUE
 
 # vfeed_edit(keysym, cp, mods): a key as the editor takes it without vim
@@ -765,7 +779,8 @@ vfeed_edit:
     call keys_lookup
     test rax, rax
     jz 1f
-    call rax
+    mov rdi, rdx
+    call keys_run
     EPILOGUE
 1:  mov edi, r12d
     mov esi, r13d
@@ -897,7 +912,12 @@ FN vim_key
     mov edx, r14d
     call vrec
     mov edi, r15d
-    call vcmd
+    mov rax, [rip + g_doc]
+    cmp qword ptr [rax + DOC_selections], 0
+    je 6f
+    call vm_cmd                 # several cursors: the key at each (vimmulti.s)
+    jmp .Lvk_yes
+6:  call vcmd
 .Lvk_yes:
     mov dword ptr [rip + g_dirty], 1
     mov eax, 1
@@ -1172,6 +1192,11 @@ vcmd:
     jmp .Lc_done
 
 .Lc_g:
+    cmp r15d, 'b'
+    jne .Lc_gg
+    call vm_gb                  # gb: a cursor at the next occurrence (vimmulti.s)
+    jmp .Lc_done
+.Lc_gg:
     cmp r15d, 'g'
     jne 1f
     mov edi, VK_GG
@@ -1194,7 +1219,25 @@ vcmd:
     jmp .Lc_op
 
 .Lc_z:
-    mov rdi, [rbx + DOC_cur]
+    # folds (fold.s): za toggles, zc folds, zo opens, zR opens all, zM folds all
+    lea rax, [rip + cmd_toggle_fold]
+    cmp r15d, 'a'
+    je 5f
+    lea rax, [rip + cmd_fold]
+    cmp r15d, 'c'
+    je 5f
+    lea rax, [rip + cmd_unfold]
+    cmp r15d, 'o'
+    je 5f
+    lea rax, [rip + cmd_unfold_all]
+    cmp r15d, 'R'
+    je 5f
+    lea rax, [rip + cmd_fold_all]
+    cmp r15d, 'M'
+    jne 6f
+5:  call rax
+    jmp .Lc_done
+6:  mov rdi, [rbx + DOC_cur]
     call vline
     mov ecx, [rip + g_ed_h_lines]
     cmp r15d, 't'
@@ -1380,16 +1423,10 @@ vcmd:
 .Lc_put:
     test dword ptr [rbx + DOC_flags], DF_READONLY
     jnz .Lc_done
-    mov [rip + v_putdoc], rbx
-    mov [rip + v_putkind], r15d
-    mov eax, [rip + v_n]
-    mov [rip + v_putcount], eax
-    mov eax, [rip + g_vim_mode]
-    mov [rip + v_putmode], eax
-    cmp eax, VM_VISUAL
-    jae 1f
-    call vsavedot
-1:  PCALL P_clip_get
+    mov edi, r15d
+    mov esi, [rip + v_n]
+    mov edx, [rip + g_vim_mode]
+    call app_clip_request_vim
     jmp .Lc_done
 
 # u, ctrl+r: the cursor goes where the change was
@@ -1416,8 +1453,12 @@ vcmd:
     jnz 2b
 3:  test r13, r13
     js .Lc_done
+    cmp qword ptr [rbx + DOC_selections], 0
+    jne 4f
     mov rdi, r13
     call vsetc
+    jmp .Lc_done
+4:  call vm_carets              # it brought back several selections: they stay (vimmulti.s)
     jmp .Lc_done
 
 .Lc_dot:
@@ -1733,12 +1774,19 @@ vvisual_op:
     call vim_sel
     mov r12, rax
     mov r13, rdx
+    cmp r15d, 'd'
+    je .Lvo_chars_apply
+    cmp r15d, 'c'
+    je .Lvo_chars_apply
+    cmp r15d, 'y'
+    je .Lvo_chars_apply
     mov edi, r15d
     mov rsi, r12
     mov rdx, r13
     xor ecx, ecx
     call vdot_visual
     call vexit_visual
+.Lvo_chars_apply:
     mov edi, r15d
     mov rsi, r12
     mov rdx, r13
@@ -1748,12 +1796,19 @@ vvisual_op:
 1:  call vsel_lines
     mov r12, rax
     mov r13, rdx
+    cmp r15d, 'd'
+    je .Lvo_lines_apply
+    cmp r15d, 'c'
+    je .Lvo_lines_apply
+    cmp r15d, 'y'
+    je .Lvo_lines_apply
     mov edi, r15d
     mov rsi, r12
     mov rdx, r13
     mov ecx, 1
     call vdot_visual
     call vexit_visual
+.Lvo_lines_apply:
     mov edi, r15d
     mov rsi, r12
     mov rdx, r13
@@ -1762,6 +1817,14 @@ vvisual_op:
     je 3f
     mov dword ptr [rip + v_visual], 0
 3:  EPILOGUE
+
+# Copy-dependent visual operators retire their selection only after the write succeeds.
+vaccepted_visual:
+    cmp dword ptr [rip + g_vim_mode], VM_VISUAL
+    jb 1f
+    call vdot_visual
+    jmp vexit_visual
+1:  ret
 
 # vop_motion(pos, flags): the pending operator from the cursor to pos
 vop_motion:
@@ -1919,16 +1982,23 @@ vop_chars:
     mov rsi, r13
     xor edx, edx
     call vyank
+    test eax, eax
+    jz 9f
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call vaccepted_visual
     mov rdi, r12
     call vsetc
     EPILOGUE
-2:  call vbegin
+2:  cmp r15d, 'd'
+    je .Loc_yank_edit
+    cmp r15d, 'c'
+    je .Loc_yank_edit
+    call vbegin
     test eax, eax
     jz 9f
-    cmp r15d, 'd'
-    je 3f
-    cmp r15d, 'c'
-    je 4f
     mov edi, r15d
     mov rsi, r12
     mov rdx, r13
@@ -1937,10 +2007,27 @@ vop_chars:
     call vsetc
     call vcommit
     EPILOGUE
-3:  mov rdi, r12
+.Loc_yank_edit:
+    mov rax, [rip + g_doc]
+    test dword ptr [rax + DOC_flags], DF_READONLY
+    jnz 9f
+    mov rdi, r12
     mov rsi, r13
     xor edx, edx
     call vyank
+    test eax, eax
+    jz 9f
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    xor ecx, ecx
+    call vaccepted_visual
+    call vbegin
+    test eax, eax
+    jz 9f
+    cmp r15d, 'c'
+    je 4f
+3:
     mov rdi, r12
     mov rsi, r13
     sub rsi, r12
@@ -1949,10 +2036,7 @@ vop_chars:
     call vsetc
     call vcommit
     EPILOGUE
-4:  mov rdi, r12
-    mov rsi, r13
-    xor edx, edx
-    call vyank
+4:
     test r14d, r14d
     jz 41f
     cmp r13, r12
@@ -2007,6 +2091,13 @@ vop_lines:
     mov rdi, r12
     mov rsi, r13
     call vyank_lines
+    test eax, eax
+    jz 9f
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vaccepted_visual
     # yk, y{: the cursor goes up to the first line
     mov rdi, [rbx + DOC_cur]
     call vline
@@ -2022,13 +2113,13 @@ vop_lines:
     mov rdi, rax
     call vsetc
     jmp 9f
-2:  call vbegin
+2:  cmp r15d, 'd'
+    je .Lol_yank_edit
+    cmp r15d, 'c'
+    je .Lol_yank_edit
+    call vbegin
     test eax, eax
     jz 9f
-    cmp r15d, 'd'
-    je 3f
-    cmp r15d, 'c'
-    je 4f
     cmp r15d, '>'
     je 5f
     cmp r15d, '<'
@@ -2046,9 +2137,25 @@ vop_lines:
     mov rdi, [rbx + DOC_cur]
     call vsetc
     jmp 8f
-3:  mov rdi, r12
+.Lol_yank_edit:
+    test dword ptr [rbx + DOC_flags], DF_READONLY
+    jnz 9f
+    mov rdi, r12
     mov rsi, r13
     call vyank_lines
+    test eax, eax
+    jz 9f
+    mov edi, r15d
+    mov rsi, r12
+    mov rdx, r13
+    mov ecx, 1
+    call vaccepted_visual
+    call vbegin
+    test eax, eax
+    jz 9f
+    cmp r15d, 'c'
+    je 4f
+3:
     mov rdi, r12
     mov rsi, r13
     call vdel_lines
@@ -2061,9 +2168,6 @@ vop_lines:
     call vsetc
     jmp 8f
 4:  # keep the indentation of the first line
-    mov rdi, r12
-    mov rsi, r13
-    call vyank_lines
     mov rdi, r12
     call vfirst
     mov r14, rax
@@ -2117,12 +2221,19 @@ vyank:
     jb 0f
     # nothing: an empty line when lines were yanked (yy in an empty file)
     test ebx, ebx
-    jz 9f
+    jnz 72f
+    mov eax, 1
+    jmp 9f
+72:
     lea rdi, [rip + v_buf]
     call sb_clear
     jmp 73f
 0:  mov rdi, r12
     mov rsi, r13
+    mov rax, r13
+    sub rax, r12
+    cmp rax, DOC_MULTI_BYTES_MAX
+    ja .Lvyank_limit
     call vcopy
     test ebx, ebx
     jz 1f
@@ -2133,10 +2244,19 @@ vyank:
 73: lea rdi, [rip + v_buf]
     mov esi, 10
     call sb_push_byte
-1:  mov rdi, [rip + v_buf + SB_ptr]
+1:  cmp dword ptr [rip + vm_collect], 0
+    je 2f
+    mov edi, ebx
+    call vm_yank_piece          # several cursors: this one's piece of one copy (vimmulti.s)
+    jmp 9f
+2:  mov rdi, [rip + v_buf + SB_ptr]
     mov rsi, [rip + v_buf + SB_len]
     mov edx, ebx
     call ed_clip_set
+    call editor_clip_result
+    jmp 9f
+.Lvyank_limit:
+    call editor_clip_failure
 9:  pop r13
     pop r12
     pop rbx
@@ -2567,6 +2687,29 @@ vvisual_replace:
 
 # ---- put ----
 
+# Admission records the dot command before a synchronous clipboard delivery can run.
+FN vim_clip_accepted
+    cmp edi, VM_VISUAL
+    jae 1f
+    jmp vsavedot
+1:  ret
+
+FN vim_clip_clear_legacy
+    mov qword ptr [rip + v_putdoc], 0
+    ret
+
+# Queue-owned parameters cannot be overwritten by a later p/P request.
+FN vim_clip_apply
+    mov eax, [rdi + CPR_putkind]
+    mov [rip + v_putkind], eax
+    mov eax, [rdi + CPR_putcount]
+    mov [rip + v_putcount], eax
+    mov eax, [rdi + CPR_putmode]
+    mov [rip + v_putmode], eax
+    mov rdi, rsi
+    mov rsi, rdx
+    jmp vput
+
 # vim_paste(ptr, len) -> 1 when the clipboard text was for p
 FN vim_paste
     xor eax, eax
@@ -2586,6 +2729,18 @@ FN vim_paste
 
 # vput(ptr, len): p or P with this text
 vput:
+    mov rax, [rip + g_doc]
+    cmp qword ptr [rax + DOC_selections], 0
+    jne vm_put                  # several cursors: a piece, or the text, at each (vimmulti.s)
+    push rdi
+    push rsi
+    sub rsp, 8
+    call ed_clip_observe
+    add rsp, 8
+    pop rsi
+    pop rdi
+# vput_text(ptr, len): vput once the clipboard was observed (vm_put: for one cursor)
+vput_text:
     PROLOGUE 16
     mov r12, rdi
     mov r13, rsi
@@ -2593,11 +2748,14 @@ vput:
     test r13, r13
     jz 9f
     # whole lines: our line copy, or text ending in a newline
+    xor r14d, r14d
+    cmp dword ptr [rip + vm_piece], 0
+    jne 0f
     mov rdi, r12
     mov rsi, r13
     call ed_clip_linewise
     mov r14d, eax
-    cmp byte ptr [r12 + r13 - 1], 10
+0:  cmp byte ptr [r12 + r13 - 1], 10
     jne 1f
     mov r14d, 1
 1:  lea rdi, [rip + v_buf]
@@ -2852,16 +3010,21 @@ vmotion:
     mov rdi, r12
     call vline
     mov [rsp + 8], rax
-    add rax, r14
+    mov rdi, rbx                # folded lines are stepped over (fold.s)
+    mov rsi, rax
+    mov rdx, r14
+    call fold_step
     call .Lm_clampline
     jmp .Lm_vert
 .Lm_k:
     mov rdi, r12
     call vline
     mov [rsp + 8], rax
-    sub rax, r14
-    jns .Lm_vert
-    xor eax, eax
+    mov rdi, rbx
+    mov rsi, rax
+    mov rdx, r14
+    neg rdx
+    call fold_step
 .Lm_vert:
     cmp rax, [rsp + 8]
     je .Lm_fail
@@ -2870,12 +3033,12 @@ vmotion:
     jne 1f
     mov rdi, rbx
     mov rsi, r12
-    call doc_col_of
+    call vt_doc_col             # visual cells, inlays included (vtext.s)
     mov [rbx + DOC_prefx], rax
 1:  mov rdi, rbx
     mov rsi, [rsp]
     mov rdx, [rbx + DOC_prefx]
-    call doc_pos_at_col
+    call vt_doc_pos_at_col
     mov r12, rax
     mov r15d, MF_LINE | MF_KEEPX
     jmp .Lm_ret
@@ -3839,6 +4002,56 @@ FN vim_sel
     mov rdx, r13
     EPILOGUE
 
+# Pure clipboard context normalization, with the same branch order as vim_view.
+# vim_clip_context(context, current_doc): never changes DOC or Vim globals.
+FN vim_clip_context
+    cmp dword ptr [rip + cfg_vim], 0
+    je .Lvcc_return
+    cmp dword ptr [rip + g_vim_cmdline], 0
+    jne .Lvcc_return
+    cmp dword ptr [rip + g_vim_mode], VM_NORMAL
+    jne .Lvcc_return
+    PROLOGUE
+    mov rbx, rdi
+    mov r12, rsi
+    mov r13, [r12 + DOC_cur]
+    cmp r13, [r12 + DOC_anchor]
+    je .Lvcc_caret
+    cmp r12, [rip + v_exdoc]
+    jne .Lvcc_visual
+    cmp r13, [rip + v_exout]
+    jne .Lvcc_visual
+    mov rax, [r12 + DOC_anchor]
+    cmp rax, [rip + v_exout + 8]
+    jne .Lvcc_visual
+    mov eax, [rip + v_exmode]
+    mov [rbx + CPX_vim + 4], eax
+    mov rax, [rip + v_excur]
+    mov [rbx + CPX_cur], rax
+    mov rax, [rip + v_exanchor]
+    mov [rbx + CPX_anchor], rax
+    jmp .Lvcc_done
+.Lvcc_visual:
+    mov dword ptr [rbx + CPX_vim + 4], VM_VISUAL
+    lea r14, [rbx + CPX_cur]
+    cmp r13, [r12 + DOC_anchor]
+    ja 1f
+    lea r14, [rbx + CPX_anchor]
+1:  mov rdi, r12
+    mov rsi, [r14]
+    call doc_prev_char
+    mov [r14], rax
+    jmp .Lvcc_done
+.Lvcc_caret:
+    mov rdi, r13
+    call vclamp
+    mov [rbx + CPX_cur], rax
+    mov [rbx + CPX_anchor], rax
+.Lvcc_done:
+    EPILOGUE
+.Lvcc_return:
+    ret
+
 # vim_view(doc): before drawing: a selection from the mouse or a command is visual mode;
 # the normal mode cursor stays on a character
 FN vim_view
@@ -3870,6 +4083,7 @@ FN vim_view
     mov [rbx + DOC_cur], rax
     mov rax, [rip + v_exanchor]
     mov [rbx + DOC_anchor], rax
+    mov esi, 1
     jmp 9f
 5:  mov dword ptr [rip + g_vim_mode], VM_VISUAL
     # the end that is past the last character selected steps back onto it
@@ -3881,12 +4095,16 @@ FN vim_view
     mov rsi, [r13]
     call doc_prev_char
     mov [r13], rax
+    mov esi, 1
     jmp 9f
 3:  mov rdi, r12
     call vclamp
     mov [rbx + DOC_cur], rax
     mov [rbx + DOC_anchor], rax
-9:  EPILOGUE
+    xor esi, esi
+9:  mov rdi, rbx
+    call vm_view                # the other selections alike (vimmulti.s)
+    EPILOGUE
 
 # vim_export(): the visual selection becomes the editor's own, as drawn, for its commands
 # (vim_view turns it back into the same visual selection)
@@ -3917,7 +4135,9 @@ FN vim_export
     jmp 4f
 3:  mov [rbx + DOC_anchor], rdx
     mov [rbx + DOC_cur], rax
-4:  mov rax, [rbx + DOC_cur]
+4:  mov rdi, rbx
+    call vm_export              # the other selections alike (vimmulti.s)
+    mov rax, [rbx + DOC_cur]
     mov [rip + v_exout], rax
     mov rax, [rbx + DOC_anchor]
     mov [rip + v_exout + 8], rax
@@ -4420,46 +4640,11 @@ vx_qabang:
     ret
 # wa: every changed file that has a path, but read-only files (as in Vim)
 vx_wa:
-    PROLOGUE
-    xor ebx, ebx
-    xor r13d, r13d              # a read-only file was left
-1:  cmp rbx, [rip + g_tabs + VEC_len]
-    jae 9f
-    mov rdi, rbx
-    call tab_at
-    inc rbx
-    cmp qword ptr [rax + TAB_kind], TAB_DOC
-    jne 1b
-    mov r12, [rax + TAB_doc]
-    test dword ptr [r12 + DOC_flags], DF_READONLY
-    jnz 1b
-    cmp qword ptr [r12 + DOC_path], 0
-    je 1b
-    mov rdi, r12
-    call doc_dirty
-    test eax, eax
-    jz 1b
-    mov rdi, r12
-    call doc_readonly
-    test eax, eax
-    jz 2f
-    mov r13d, 1
-    jmp 1b
-2:  mov rdi, r12
-    call doc_save
-    test rax, rax
-    js 1b
-    mov rdi, r12
-    call app_after_save
-    jmp 1b
-9:  test r13d, r13d
-    jz 8f
-    lea rdi, [rip + .Lro_left]
-    call app_toast
-8:  EPILOGUE
+    xor edi, edi
+    jmp app_save_all
 vx_wqa:
-    call vx_wa
-    jmp cmd_quit
+    mov edi, 1
+    jmp app_save_all
 vx_noh:
     lea rdi, [rip + g_ed_find]
     jmp sb_clear

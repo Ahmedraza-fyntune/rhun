@@ -21,6 +21,15 @@ g_mem_live: .quad 0
 
 # os_map(size) -> ptr (dies on failure)
 FN os_map
+    push rbx
+    call os_map_try
+    pop rbx
+    test rax, rax
+    jz .Lmap_fail
+    ret
+
+# os_map_try(size) -> ptr or 0, including failures translated by macOS and Windows
+FN os_map_try
     mov rsi, rdi
     xor edi, edi
     mov edx, PROT_READ | PROT_WRITE
@@ -29,7 +38,9 @@ FN os_map
     xor r9d, r9d
     SYS SYS_mmap
     cmp rax, -4096
-    ja .Lmap_fail
+    ja 1f
+    ret
+1:  xor eax, eax
     ret
 .Lmap_fail:
     lea rdi, [rip + .Loom]
@@ -41,6 +52,23 @@ FN os_map
 
 # mem_alloc(size) -> ptr
 FN mem_alloc
+    # header and page rounding must not wrap into a small allocation
+    mov rax, -4112
+    cmp rdi, rax
+    ja .Lmap_fail
+    push rbx
+    call .Lma_begin
+    pop rbx
+    test rax, rax
+    jz .Lmap_fail
+    ret
+
+# mem_alloc_try(size) -> ptr or 0, for both small chunks and large mappings
+FN mem_alloc_try
+    mov rax, 1 << 40
+    cmp rdi, rax
+    jae .Lma_zero              # check before size + header can wrap
+.Lma_begin:
     push rbx
     push r12
     push r13
@@ -70,7 +98,9 @@ FN mem_alloc
     cmp r8, [rip + chunk_end]
     jbe .Lma_take
     mov edi, MEM_CHUNK
-    call os_map
+    call os_map_try
+    test rax, rax
+    jz .Lma_failed
     mov [rip + chunk_ptr], rax
     lea r8, [rax + MEM_CHUNK]
     mov [rip + chunk_end], r8
@@ -98,7 +128,9 @@ FN mem_alloc
     add rbx, 4095
     and rbx, -4096
     mov rdi, rbx
-    call os_map                 # anonymous mappings are zeroed
+    call os_map_try             # anonymous mappings are zeroed
+    test rax, rax
+    jz .Lma_failed
     mov [rax], rbx
     mov [rax + 8], r12
     add rax, 16
@@ -108,38 +140,13 @@ FN mem_alloc
     pop rbx
     ret
 
-# mem_alloc_try(size) -> ptr or 0: like mem_alloc, but a large block that cannot be mapped is not fatal
-FN mem_alloc_try
-    lea rax, [rdi + 16]
-    cmp rax, MEM_MAXSMALL
-    jbe mem_alloc
-    mov rax, 1 << 40
-    cmp rdi, rax
-    jae 1f
-    push rbx
-    push r12
-    mov r12, rdi
-    lea rbx, [rdi + 16 + 4095]
-    and rbx, -4096
-    xor edi, edi
-    mov rsi, rbx
-    mov edx, PROT_READ | PROT_WRITE
-    mov r10d, MAP_PRIVATE | MAP_ANONYMOUS
-    mov r8, -1
-    xor r9d, r9d
-    SYS SYS_mmap
-    cmp rax, -4096
-    ja 2f
-    mov [rax], rbx
-    mov [rax + 8], r12
-    add rax, 16
-    inc qword ptr [rip + g_mem_live]
+.Lma_failed:
+    pop r13
     pop r12
     pop rbx
     ret
-2:  pop r12
-    pop rbx
-1:  xor eax, eax
+.Lma_zero:
+    xor eax, eax
     ret
 
 # mem_free(ptr)
@@ -180,7 +187,10 @@ FN mem_realloc
     jnz 1f
     mov rdi, rsi
     jmp mem_alloc
-1:  push rbx
+1:  mov rax, -4112
+    cmp rsi, rax
+    ja .Lmap_fail
+    push rbx
     push r12
     push r13
     mov rbx, rdi

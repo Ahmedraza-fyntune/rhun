@@ -17,6 +17,7 @@ F CT_scrolly, 8
 F CT_scrollx, 8
 F CT_wtop, 8
 F CT_woff, 8
+F CT_folds, 8                   # its folds, "H-E,..." (owned; fold.s), or 0
 ENDSTRUCT CT_SIZE
 
 .bss
@@ -43,14 +44,19 @@ FN closed_note
     and ecx, TF_PIN
     mov [rbx + CT_pin], rcx
     mov rcx, [rax + TAB_kind]
+    cmp rcx, TAB_VIEW
+    je 9f                       # an extension's view: it is gone with its extension's picture
     mov [rbx + CT_kind], rcx
     mov r13, [rax + TAB_doc]
     test r13, r13
     jz .Lcn_push                # Settings, the history
     mov r14, [r13 + DOC_diff]
     test r14, r14
-    jnz .Lcn_diff
-    mov rdi, [r13 + DOC_path]
+    jz 1f
+    cmp qword ptr [r14 + DV_review], 0
+    jne 9f                      # AI: a Review tab is gone with its decisions (review.s)
+    jmp .Lcn_diff
+1:  mov rdi, [r13 + DOC_path]
     test rdi, rdi
     jz 9f                       # untitled: nothing to bring back
     call str_own
@@ -67,10 +73,17 @@ FN closed_note
     mov [rbx + CT_wtop], rax
     mov rax, [r13 + DOC_woff]
     mov [rbx + CT_woff], rax
+    mov rdi, r13
+    call fold_session_string
+    mov [rbx + CT_folds], rax
     jmp .Lcn_push
 .Lcn_diff:
+    test dword ptr [r14 + DV_flags], DVF_OWN
+    jnz 9f                      # a workspace edit's preview or an extension's diff: not git's
     mov qword ptr [rbx + CT_kind], CK_DIFF
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 9f                       # a diff with no file of its own: nothing to fetch again
     call str_own
     mov [rbx + CT_path], rax
     mov rdi, [r14 + DV_rev]
@@ -155,13 +168,15 @@ reopen_probe:
     mov rax, [rbx + CT_kind]
     cmp rax, TAB_SETTINGS
     je .Lrp_settings
+    cmp rax, TAB_EXT
+    je .Lrp_ext
     cmp rax, TAB_GIT
     je .Lrp_git
     cmp rax, CK_DIFF
     je .Lrp_diff
     # a file, as long as it is still there
     mov rdi, [rbx + CT_path]
-    call file_type
+    call vfs_type
     test eax, eax
     jz 8f
     mov rdi, [rbx + CT_path]
@@ -188,11 +203,17 @@ reopen_probe:
     mov rax, [rbx + CT_woff]
     mov [r12 + DOC_woff], rax
     mov rdi, r12
+    mov rsi, [rbx + CT_folds]
+    call fold_session_in        # its folds (fold.s)
+    mov rdi, r12
     call ed_top_inside          # the file may be shorter now
     mov dword ptr [rip + g_reveal], 0     # the view as it was, even with the cursor out of it
     jmp .Lrp_place
 .Lrp_settings:
     call cmd_settings
+    jmp .Lrp_place
+.Lrp_ext:
+    call cmd_extensions
     jmp .Lrp_place
 .Lrp_git:
     cmp dword ptr [rip + g_git_on], 0
@@ -229,6 +250,8 @@ probe_open:
     mov r13, [r12 + CT_kind]
     cmp r13, TAB_SETTINGS
     je 1f
+    cmp r13, TAB_EXT
+    je 1f
     cmp r13, TAB_GIT
     je 1f
     cmp r13, CK_DIFF
@@ -254,6 +277,8 @@ probe_open:
     test r14, r14
     jz 5f
     mov rdi, [r14 + DV_path]
+    test rdi, rdi
+    jz 5f                       # a Review tab (review.s): no file
     mov rsi, [r12 + CT_path]
     call str_same
     test eax, eax
@@ -322,8 +347,11 @@ entry_free:
     call mem_free
     mov rdi, [rbx + CT_rev]
     call mem_free
+    mov rdi, [rbx + CT_folds]
+    call mem_free
     mov qword ptr [rbx + CT_path], 0
     mov qword ptr [rbx + CT_rev], 0
+    mov qword ptr [rbx + CT_folds], 0
     pop rbx
     ret
 

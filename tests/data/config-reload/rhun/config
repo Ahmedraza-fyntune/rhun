@@ -1,4 +1,5 @@
 [editor]
+multi_cursor_paste = full
 tab_width = 3
 [keys]
 ctrl+q = quit

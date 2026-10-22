@@ -33,6 +33,7 @@ release() {
         cp assets/icons/rhun.svg "$r/share/icons/hicolor/scalable/apps/"
         cp assets/icons/rhun-256.png "$r/share/icons/hicolor/256x256/apps/rhun.png"
         cp assets/icons/rhun-512.png "$r/share/icons/hicolor/512x512/apps/rhun.png"
+        if [ "$v" != 1.0.0 ]; then printf 'Unicode notice %s\n' "$v" > "$r/LICENSE-Unicode.txt"; fi
         tar -czf "$d/rhun-$v-linux-x86_64.tar.gz" -C "$s" "rhun-$v"
     else
         mkdir -p "$s/rhun.app/Contents/MacOS"
@@ -182,6 +183,9 @@ inst --update --target "$target" --version 99.0.0
 t "exit $st" [ $st = 0 ]
 t "quiet" [ ! -s "$w/out" ]
 t "rhun --version" [ "$("$bin" --version 2>&1)" = "rhun 99.0.0" ]
+if [ $os = linux ]; then
+    t "Unicode notice retained by update" grep -qx 'Unicode notice 99.0.0' "$H/.local/share/licenses/rhun/LICENSE-Unicode.txt"
+fi
 t "the running copy goes on" kill -0 $running
 kill $running 2>/dev/null
 wait $running 2>/dev/null
@@ -278,6 +282,10 @@ t "exit $st" [ $st = 0 ]
 t "usage" said "usage: install.sh"
 end
 
+if [ $os = linux ]; then
+    mkdir -p "$H/.local/share/licenses/rhun"
+    printf 'personal notice\n' > "$H/.local/share/licenses/rhun/personal.txt"
+fi
 begin uninstall
 mkdir -p "$H/.config/rhun"
 echo "[ui]" > "$H/.config/rhun/config"
@@ -286,6 +294,8 @@ t "exit $st" [ $st = 0 ]
 t "binary gone" [ ! -e "$bin" ]
 t "app gone" [ ! -e "$target" ]
 if [ $os = linux ]; then
+    t "Unicode notice removed" [ ! -e "$H/.local/share/licenses/rhun/LICENSE-Unicode.txt" ]
+    t "unrelated notice kept" grep -qx 'personal notice' "$H/.local/share/licenses/rhun/personal.txt"
     t "desktop entry gone" [ ! -e "$H/.local/share/applications/rhun.desktop" ]
     t "link handler gone" [ ! -e "$H/.local/share/applications/rhun-url-handler.desktop" ]
     t "icons gone" [ ! -e "$H/.local/share/icons/hicolor/512x512/apps/rhun.png" ]
