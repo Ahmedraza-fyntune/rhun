@@ -85,6 +85,14 @@ class Results(lang.Lang):
         self.assertTrue(head[1].endswith('title=1 reference to total'), head)
         self.assertEqual(self.stats(out, 'references')['cancelled'], '1', out)
 
+    def test_escape_cancels_a_query_still_searching(self):
+        root = self.provider({'hello': 'hello 1 references', 'answers': {'references': {'silent': True}}},
+                             'references = *.rs\n')
+        out = self.run_lang(root, ['cmd references', 'wait 200', 'key Escape', 'wait 200', 'print-langstats fake/lang',
+                                   'print-toast'])
+        self.assertEqual(self.stats(out, 'references')['cancelled'], '1', out)
+        self.assertIn('No references found', out[-1])
+
     def test_find_in_files_moves_its_results_here(self):
         root = self.provider({'hello': 'hello 1'}, 'definition = *.go\n')
         out = self.run_lang(root, ['key ctrl+shift+f', 'type total', 'wait-grep', 'wait 100', 'key ctrl+Return',

@@ -24,6 +24,8 @@
 .equ HC_ALL_MAX, 262144         # all of them
 .equ HC_COLS, 80
 .equ HC_DIAGS, 16               # diagnostics shown
+.equ ID_HC_AREA, 0x6c5000       # the card's text (selecting it)
+.equ ID_HC_LINKS, 0x6c6000      # + n: its links
 .equ HCS_EXT, 1
 .equ HCS_DIAG, 2
 .equ HCS_DECO, 3
@@ -43,19 +45,12 @@ F HCX_text, 8                   # owned, line feeds only, tabs as spaces
 F HCX_len, 8
 ENDSTRUCT HCX_SIZE
 
-# a line of the card
-STRUCT
-F HCL_ptr, 8
-F HCL_len, 4                    # -1: a rule
-F HCL_color, 4                  # T_* slot
-ENDSTRUCT HCL_SIZE
-
 .bss
 .p2align 3
 hc_state: .long 0               # 0 none, 1 asking, 2 shown
 hc_kind: .long 0                # 0 pointer, 1 invoked
 hc_focus: .long 0               # an invoked card has the keyboard
-hc_scroll: .long 0              # its first line shown
+hc_scroll: .long 0              # its text's first pixel row shown
 hc_doc: .quad 0                 # the position: DOC*, its id and version, byte offset
 hc_docid: .quad 0
 hc_version: .quad 0
@@ -69,19 +64,21 @@ hc_re: .quad 0
 hc_ax: .long 0                  # the anchor: x, the word's row top and bottom
 hc_ay0: .long 0
 hc_ay: .long 0
-hc_lcols: .long 0               # the layout's widest line in columns
+hc_th: .long 0                  # its text's height laid out
+hc_mmax: .long 0                # the width measure ran at (0: measure again)
+hc_mw: .long 0                  # and the text width it gave
+hc_mgen: .long 0                # at that face generation
 hc_asked_doc: .quad 0           # the rest position last looked at
 hc_asked_pos: .quad 0
 hc_asked_since: .quad 0         # and when that rest began (g_hover_since)
 hc_gen: .quad 0                 # changes when the sections do
-hc_lgen: .quad 0                # the layout's
-hc_wcolor: .long 0              # wrap's color for emit
-hc_wpad: .long 0
+hc_md: .quad 0                  # the card's document (markdown.s), made from hc_src
 hc_bytes: .quad 0
 hc_rect: .zero 16
 hc_reqs: .zero VEC_SIZE         # HCR
 hc_secs: .zero VEC_SIZE         # HCX, in rank order
-hc_lines: .zero VEC_SIZE        # HCL
+hc_src: .zero SB_SIZE           # the card's Markdown, and the next frame's (re-parsed when it differs)
+hc_new: .zero SB_SIZE
 hc_parts: .zero 8 * 4 * (HC_DIAGS + 4)   # the layout's texts: offset in hc_dbuf, length, color, kind
 hc_nparts: .quad 0
 hc_dbuf: .zero SB_SIZE          # the diagnostics', the tip's and the v1 answer's texts, copied
@@ -146,6 +143,12 @@ close:
     mov dword ptr [rip + hc_focus], 0
     mov dword ptr [rip + hc_scroll], 0
     mov qword ptr [rip + hc_leave], 0
+    mov rdi, [rip + hc_md]      # the next card is made anew
+    test rdi, rdi
+    jz 1f
+    call md_free
+    mov qword ptr [rip + hc_md], 0
+1:  mov qword ptr [rip + hc_src + SB_len], 0
     mov dword ptr [rip + g_dirty], 1
     EPILOGUE
 
@@ -748,8 +751,8 @@ settle:
     jne 5f
     cmp dword ptr [rip + hc_kind], 0
     je 4f                       # a pointer card needs a provider's text (else the tooltip shows)
-    call layout                 # an invoked one shows diagnostics and tips alone too
-    cmp qword ptr [rip + hc_lines + VEC_len], 0
+    call collect                # an invoked one shows diagnostics and tips alone too
+    cmp qword ptr [rip + hc_nparts], 0
     jne 5f
     call close
     lea rdi, [rip + .Lnothing]
@@ -1047,179 +1050,183 @@ part_text:
     mov rax, [rax + HCX_text]
     ret
 
-# layout(): hc_lines from the parts, wrapped at the card's columns
-layout:
-    PROLOGUE 32
+# compose(): hc_new = the card's Markdown from the parts, separated by rules: a diagnostic as
+# "**error:** message", a provider's text as it is when it agreed markdown, other texts escaped
+# (their line breaks kept, leading spaces as no-break spaces)
+compose:
+    PROLOGUE 16
     call collect
-    mov qword ptr [rip + hc_lines + VEC_len], 0
-    mov dword ptr [rip + hc_lcols], 0
-    # the columns: 80, or 60% of the window, whichever is less
-    mov eax, [rip + g_cv + CV_w]
-    imul eax, eax, 60
-    xor edx, edx
-    mov ecx, 100
-    div ecx
-    M ecx, MI_8
-    sub eax, ecx
-    sub eax, ecx
-    xor edx, edx
-    div dword ptr [rip + g_cw]
-    cmp eax, HC_COLS
-    jbe 1f
-    mov eax, HC_COLS
-1:  cmp eax, 20
-    jge 2f
-    mov eax, 20
-2:  mov [rsp], eax              # columns
+    lea rdi, [rip + hc_new]
+    call sb_clear
     xor ebx, ebx
-3:  cmp rbx, [rip + hc_nparts]
+1:  cmp rbx, [rip + hc_nparts]
     jae 9f
     test rbx, rbx
-    jz 4f
-    lea rdi, [rip + hc_lines]   # a rule between texts
-    mov esi, HCL_SIZE
-    call vec_push
-    mov qword ptr [rax + HCL_ptr], 0
-    mov dword ptr [rax + HCL_len], -1
-    mov dword ptr [rax + HCL_color], T_BORDER
-4:  mov rdi, rbx
-    call part_text
-    mov [rsp + 8], rax
-    mov [rsp + 16], rdx
-    mov [rsp + 24], ecx
-    mov rdi, rax
-    mov rsi, rdx
-    mov edx, [rsp]
-    mov ecx, [rsp + 24]
-    call wrap
-    inc rbx
-    jmp 3b
-9:  mov rax, [rip + hc_gen]
-    mov [rip + hc_lgen], rax
-    EPILOGUE
-
-# wrap(ptr, len, cols, color): the text's lines, each broken at its last space before the columns
-# run out (or where they do)
-wrap:
-    PROLOGUE 32
-    mov rbx, rdi
-    lea r12, [rdi + rsi]        # the end
-    mov [rsp], edx
-    mov [rip + hc_wcolor], ecx
-.Lwr_line:
-    cmp rbx, r12
-    jae .Lwr_done
-    mov r13, rbx                # this line's start
-    xor r14d, r14d              # its columns
-    xor r15d, r15d              # the last space after which it may break, 0 for none
-.Lwr_byte:
-    cmp rbx, r12
-    jae .Lwr_emit
-    movzx eax, byte ptr [rbx]
-    cmp eax, 10
-    je .Lwr_emit
-    cmp eax, ' '
-    jne 1f
-    mov r15, rbx
-1:  cmp eax, 0x80
-    jb 3f
+    jz 2f
+    lea rdi, [rip + hc_new]
+    lea rsi, [rip + .Lrule]
+    call sb_push_cstr
+2:  mov rax, rbx
+    shl rax, 5
+    lea rcx, [rip + hc_parts]
+    mov r14, [rcx + rax + 24]   # its kind
+    mov r15, [rcx + rax]        # its offset (a section: -1 - index)
     mov rdi, rbx
+    call part_text
+    mov r12, rax
+    mov r13, rdx
+    cmp r14, HCS_DIAG
+    jne 3f
+    xor ecx, ecx                # "word: " bold
+4:  cmp rcx, r13
+    jae 5f
+    cmp rcx, 12
+    jae 5f
+    cmp byte ptr [r12 + rcx], ':'
+    je 41f
+    inc rcx
+    jmp 4b
+41: inc rcx
+    mov [rsp], rcx
+    lea rdi, [rip + hc_new]
+    lea rsi, [rip + .Lstrong]
+    call sb_push_cstr
+    lea rdi, [rip + hc_new]
     mov rsi, r12
-    sub rsi, rbx
-    call utf8_decode
-    test edx, edx
-    jnz 2f
-    mov edx, 1
-2:  mov [rsp + 8], rdx
-    mov edi, eax
-    call cp_width
-    mov rdx, [rsp + 8]
-    jmp 4f
-3:  mov eax, 1
-    mov edx, 1
-4:  add r14d, eax
-    cmp r14d, [rsp]
-    jbe 5f
-    # past the columns: break at the last space, else here
-    test r15, r15
-    jz 41f
-    cmp r15, r13
-    jbe 41f
-    mov rdi, r13
-    mov rsi, r15
-    sub rsi, r13
-    call emit
-    lea rbx, [r15 + 1]
-    jmp .Lwr_line
-41: cmp rbx, r13
-    jne 42f
-    add rbx, rdx                # one character wider than the card: alone
-42: mov rdi, r13
-    mov rsi, rbx
-    sub rsi, r13
-    call emit
-    jmp .Lwr_line
-5:  add rbx, rdx
-    jmp .Lwr_byte
-.Lwr_emit:
-    mov rdi, r13
-    mov rsi, rbx
-    sub rsi, r13
-    call emit
-    cmp rbx, r12
-    jae .Lwr_done
-    inc rbx                     # past the line feed
-    jmp .Lwr_line
-.Lwr_done:
-    EPILOGUE
+    mov rdx, [rsp]
+    call push_plain
+    lea rdi, [rip + hc_new]
+    lea rsi, [rip + .Lstrong]
+    call sb_push_cstr
+    mov rcx, [rsp]
+    add r12, rcx
+    sub r13, rcx
+    jmp 5f
+3:  cmp r14, HCS_EXT
+    jne 5f
+    mov rax, r15
+    not rax
+    imul rax, rax, HCX_SIZE
+    add rax, [rip + hc_secs + VEC_ptr]
+    mov rdi, [rax + HCX_ext]
+    mov esi, FEAT_MARKDOWN
+    call ext_feature
+    test eax, eax
+    jz 5f
+    lea rdi, [rip + hc_new]     # Markdown as it came
+    mov rsi, r12
+    mov rdx, r13
+    call sb_push
+    jmp 6f
+5:  lea rdi, [rip + hc_new]
+    mov rsi, r12
+    mov rdx, r13
+    call push_plain
+6:  inc rbx
+    jmp 1b
+9:  EPILOGUE
 
-# emit(ptr, len): a line of the card, in wrap's color
-emit:
+# push_plain(sb, ptr, len): text as Markdown that shows it as it is: punctuation escaped, a line
+# break kept (a hard break inside a paragraph), leading spaces as no-break spaces
+push_plain:
     PROLOGUE
     mov rbx, rdi
     mov r12, rsi
-    mov rdi, rbx
-    mov rsi, r12
-    call line_cols
-    cmp eax, [rip + hc_lcols]
-    jbe 1f
-    mov [rip + hc_lcols], eax
-1:  lea rdi, [rip + hc_lines]
-    mov esi, HCL_SIZE
-    call vec_push
-    mov [rax + HCL_ptr], rbx
-    mov [rax + HCL_len], r12d
-    mov ecx, [rip + hc_wcolor]
-    mov [rax + HCL_color], ecx
-    EPILOGUE
-
-# line_cols(ptr, len) -> eax its columns
-line_cols:
-    PROLOGUE
-    mov rbx, rdi
-    lea r12, [rdi + rsi]
-    xor r13d, r13d
-1:  cmp rbx, r12
+    lea r13, [rsi + rdx]
+    mov r14d, 1                 # at a line's start
+1:  cmp r12, r13
     jae 9f
-    movzx eax, byte ptr [rbx]
-    cmp eax, 0x80
+    movzx r15d, byte ptr [r12]
+    inc r12
+    cmp r15d, 10
+    jne 3f
+    test r14d, r14d             # a line with text, followed by one: a hard break
+    jnz 2f
+    cmp r12, r13
     jae 2f
-    inc r13d
-    inc rbx
-    jmp 1b
+    cmp byte ptr [r12], 10
+    je 2f
+    mov rdi, rbx
+    mov esi, '\\'
+    call sb_push_byte
 2:  mov rdi, rbx
-    mov rsi, r12
-    sub rsi, rbx
-    call utf8_decode
-    test edx, edx
-    jnz 3f
-    mov edx, 1
-3:  add rbx, rdx
-    mov edi, eax
-    call cp_width
-    add r13d, eax
+    mov esi, 10
+    call sb_push_byte
+    mov r14d, 1
     jmp 1b
-9:  mov eax, r13d
+3:  test r14d, r14d
+    jz 4f
+    cmp r15d, ' '
+    jne 4f
+    mov rdi, rbx
+    lea rsi, [rip + .Lnbsp]
+    call sb_push_cstr
+    jmp 1b
+4:  xor r14d, r14d
+    lea rdi, [rip + .Lescaped]
+    mov esi, r15d
+    call strchr_byte
+    test eax, eax
+    jz 5f
+    mov rdi, rbx
+    mov esi, '\\'
+    call sb_push_byte
+5:  mov rdi, rbx
+    mov esi, r15d
+    call sb_push_byte
+    jmp 1b
+9:  EPILOGUE
+
+# strchr_byte(cstr, byte) -> eax 1 when the byte is in the cstr
+strchr_byte:
+1:  movzx eax, byte ptr [rdi]
+    test eax, eax
+    jz 8f
+    cmp eax, esi
+    je 2f
+    inc rdi
+    jmp 1b
+2:  mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
+# build() -> eax 1 with hc_md the card's document (parsed again only when its Markdown changed),
+# 0 when there is nothing to show
+build:
+    PROLOGUE
+    call compose
+    cmp qword ptr [rip + hc_nparts], 0
+    je 8f
+    mov rdi, [rip + hc_md]
+    test rdi, rdi
+    jz 1f
+    mov rdx, [rip + hc_new + SB_len]
+    cmp rdx, [rip + hc_src + SB_len]
+    jne 1f
+    mov rdi, [rip + hc_new + SB_ptr]
+    mov rsi, [rip + hc_src + SB_ptr]
+    call mem_eq
+    test eax, eax
+    jnz 7f
+1:  lea rdi, [rip + hc_src]
+    call sb_clear
+    lea rdi, [rip + hc_src]
+    mov rsi, [rip + hc_new + SB_ptr]
+    mov rdx, [rip + hc_new + SB_len]
+    call sb_push
+    mov rdi, [rip + hc_md]
+    test rdi, rdi
+    jz 2f
+    call md_free
+2:  mov rdi, [rip + hc_src + SB_ptr]
+    mov rsi, [rip + hc_src + SB_len]
+    call md_new
+    mov [rip + hc_md], rax
+    mov dword ptr [rip + hc_mmax], 0    # a new document: measure it again
+7:  mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
     EPILOGUE
 
 # ---------------- drawing and input ----------------
@@ -1236,9 +1243,11 @@ FN hovercard_blocks_editor
     jmp ui_in
 1:  ret
 
-# FN hovercard_draw(): the card, on top of the editor (after the completion list's turn)
+# FN hovercard_draw(): the card, on top of the editor (after the completion list's turn): its
+# Markdown laid out at most 80 columns or 60% of the window wide and half the window high; dragging
+# selects text, a link opens (http(s) in the browser, rhun:// and files in rhun)
 FN hovercard_draw
-    PROLOGUE 32
+    PROLOGUE 48
     cmp dword ptr [rip + hc_state], 2
     jne .Lhd_ret
     cmp dword ptr [rip + cp_open], 0
@@ -1248,30 +1257,72 @@ FN hovercard_draw
 0:  cmp dword ptr [rip + hc_kind], 0
     je 91f
     call anchor                 # an invoked card follows the caret (it may have moved there)
-91: mov rax, [rip + hc_gen]
-    cmp rax, [rip + hc_lgen]
-    jne 1f
-    cmp dword ptr [rip + hc_kind], 0
-    jne 2f
-1:  call layout                 # (a pointer card's v1 answer may come any time)
-2:  mov rax, [rip + hc_lines + VEC_len]
-    test rax, rax
+91: call build                  # (a pointer card's v1 answer may come any time)
+    test eax, eax
     jz .Lhd_close
-    # the size: its widest line, at most half the window high
+    # the size: the text's widest line, at most half the window high
     M ecx, MI_8
-    mov eax, [rip + hc_lcols]
-    imul eax, [rip + g_cw]
-    lea eax, [rax + rcx*2]
-    mov [rsp + 8], eax          # w
-    mov eax, [rip + hc_lines + VEC_len]
-    imul eax, [rip + g_lh]
-    lea eax, [rax + rcx*2]
+    mov eax, [rip + g_cv + CV_w]
+    imul eax, eax, 60
+    xor edx, edx
+    mov r8d, 100
+    div r8d
+    mov edx, [rip + g_cw]
+    imul edx, edx, HC_COLS
+    cmp eax, edx
+    jbe 1f
+    mov eax, edx
+1:  sub eax, ecx
+    sub eax, ecx
+    cmp eax, 80
+    jge 11f
+    mov eax, 80
+11: mov [rsp + 40], eax         # the most it may take
+    # measuring lays the text out at the most, which drops a selection: measure once per
+    # document, size and faces, so the layout below keeps its width from frame to frame
+    cmp [rip + hc_mmax], eax
+    jne 13f
+    mov ecx, [rip + g_face_gen]
+    cmp ecx, [rip + hc_mgen]
+    jne 13f
+    mov eax, [rip + hc_mw]
+    jmp 12f
+13: mov [rip + hc_mmax], eax
+    mov ecx, [rip + g_face_gen]
+    mov [rip + hc_mgen], ecx
+    mov rdi, [rip + hc_md]
+    mov esi, eax
+    call md_measure
+    add eax, [rip + g_mt + 4*MI_4]   # a little room: laid out at its own widest line, a line's
+    cmp eax, [rsp + 40]              # last word could wrap
+    jbe 14f
+    mov eax, [rsp + 40]
+14: mov [rip + hc_mw], eax
+12: mov [rsp + 20], eax         # the text's width
+    mov rdi, [rip + hc_md]
+    mov esi, eax
+    call md_layout
+    mov [rip + hc_th], eax
+    M ecx, MI_8
     mov edx, [rip + g_cv + CV_h]
     shr edx, 1
+    sub edx, ecx
+    sub edx, ecx
     cmp eax, edx
-    jbe 3f
+    jbe 2f
     mov eax, edx
-3:  mov [rsp + 12], eax         # h
+2:  test eax, eax
+    jg 21f
+    mov eax, 1
+21: mov [rsp + 24], eax         # the text's height shown
+    mov eax, [rsp + 20]
+    lea eax, [rax + rcx*2]
+    mov [rsp + 8], eax          # w
+    mov eax, [rsp + 24]
+    lea eax, [rax + rcx*2]
+    mov [rsp + 12], eax         # h
+    xor edi, edi                # the scroll within the text
+    call scroll_px
     # the place: under the word, above it without room, inside the window
     mov eax, [rip + hc_ax]
     mov ecx, [rip + g_cv + CV_w]
@@ -1332,18 +1383,9 @@ FN hovercard_draw
     call wheel_xy
     test edx, edx
     jz 7f
-    mov eax, edx
-    cdq
-    idiv dword ptr [rip + g_lh]
-    test eax, eax
-    jnz 61f
-    mov eax, 1
-    test edx, edx
-    jns 61f
-    mov eax, -1
-61: mov edi, eax
-    call scroll_lines
-7:  # the frame and the lines in view
+    mov edi, edx
+    call scroll_px
+7:  # the frame
     mov edi, [rsp]
     mov esi, [rsp + 4]
     mov edx, [rsp + 8]
@@ -1359,58 +1401,48 @@ FN hovercard_draw
     call gfx_frame
     add rsp, 16
     M ecx, MI_8
-    mov edi, [rsp]
-    add edi, ecx
-    mov esi, [rsp + 4]
-    add esi, ecx
-    mov edx, [rsp + 8]
-    sub edx, ecx
-    sub edx, ecx
-    mov eax, [rsp + 12]
-    sub eax, ecx
-    sub eax, ecx
-    mov ecx, eax
-    mov [rsp + 16], ecx         # the text's height
-    call gfx_clip_push
-    mov r12d, [rip + hc_scroll]
-    M eax, MI_8
-    mov r13d, [rsp + 4]
-    add r13d, eax               # y
-8:  cmp r12, [rip + hc_lines + VEC_len]
-    jae 89f
+    mov eax, [rsp]
+    add eax, ecx
+    mov [rsp + 28], eax         # the text's x, y
     mov eax, [rsp + 4]
-    add eax, [rsp + 12]
-    cmp r13d, eax
-    jge 89f
-    imul rbx, r12, HCL_SIZE
-    add rbx, [rip + hc_lines + VEC_ptr]
-    cmp dword ptr [rbx + HCL_len], -1
-    jne 81f
-    mov edi, [rsp]              # a rule
-    mov esi, r13d
-    mov eax, [rip + g_lh]
-    shr eax, 1
-    add esi, eax
-    mov edx, [rsp + 8]
-    M ecx, MI_1
-    COLOR r8d, T_BORDER
-    call gfx_fill
-    jmp 82f
-81: mov eax, [rbx + HCL_color]
-    lea rcx, [rip + g_theme]
-    mov r9d, [rcx + rax*4]
-    lea rdi, [rip + g_face_code]
-    mov esi, [rsp]
-    add esi, [rip + g_mt + 4*MI_8]
-    mov edx, r13d
-    add edx, [rip + g_base]
-    mov rcx, [rbx + HCL_ptr]
-    mov r8d, [rbx + HCL_len]
-    call text_draw
-82: add r13d, [rip + g_lh]
-    inc r12
-    jmp 8b
-89: call gfx_clip_pop
+    add eax, ecx
+    mov [rsp + 32], eax
+    # dragging over the text selects it
+    mov edi, ID_HC_AREA
+    mov esi, [rsp + 28]
+    mov edx, [rsp + 32]
+    mov ecx, [rsp + 20]
+    mov r8d, [rsp + 24]
+    call ui_btn
+    mov r8d, eax
+    mov rdi, [rip + hc_md]
+    mov esi, [rsp + 28]
+    mov edx, [rsp + 32]
+    mov ecx, [rip + hc_scroll]
+    call md_select_mouse
+    mov edi, [rsp + 28]
+    mov esi, [rsp + 32]
+    mov edx, [rsp + 20]
+    mov ecx, [rsp + 24]
+    call gfx_clip_push
+    mov eax, ID_HC_LINKS
+    push rax
+    push rax
+    mov rdi, [rip + hc_md]
+    mov esi, [rsp + 16 + 28]
+    mov edx, [rsp + 16 + 32]
+    mov ecx, [rsp + 16 + 20]
+    mov r8d, [rsp + 16 + 24]
+    mov r9d, [rip + hc_scroll]
+    call md_draw
+    add rsp, 16
+    mov [rsp + 36], eax
+    call gfx_clip_pop
+    mov esi, [rsp + 36]
+    test esi, esi
+    js .Lhd_ret
+    mov rdi, [rip + hc_md]      # a link: rhun follows it (others are left alone in a card)
+    call md_open_link
     jmp .Lhd_ret
 .Lhd_close:
     call close
@@ -1433,22 +1465,27 @@ pointer_in:
     jmp on_range
 1:  ret
 
-# scroll_lines(n): the card's first line moves, within its lines
-scroll_lines:
+# scroll_px(n): the card's text moves by n pixels, within it (0: kept within after a new layout)
+scroll_px:
     mov eax, [rip + hc_scroll]
     add eax, edi
-    jns 1f
-    xor eax, eax
-1:  mov ecx, [rip + hc_lines + VEC_len]
-    dec ecx
-    jns 2f
-    xor ecx, ecx
-2:  cmp eax, ecx
-    jle 3f
+    mov ecx, [rip + hc_th]      # at most its height less what shows (half the window, its padding)
+    mov edx, [rip + g_cv + CV_h]
+    shr edx, 1
+    sub edx, [rip + g_mt + 4*MI_8]
+    sub edx, [rip + g_mt + 4*MI_8]
+    sub ecx, edx
+    cmp eax, ecx
+    jle 1f
     mov eax, ecx
-3:  mov [rip + hc_scroll], eax
+1:  test eax, eax
+    jns 2f
+    xor eax, eax
+2:  cmp eax, [rip + hc_scroll]
+    je 3f
+    mov [rip + hc_scroll], eax
     mov dword ptr [rip + g_dirty], 1
-    ret
+3:  ret
 
 # FN hovercard_key(keysym, cp, mods) -> eax 1 when the card took the key (the editor's keyboard):
 # a focused card scrolls with the arrows and pages and closes with Escape; otherwise Escape closes
@@ -1471,20 +1508,34 @@ FN hovercard_key
     jmp 7f
 3:  cmp dword ptr [rip + hc_focus], 0
     je 5f
-    mov edi, 1
+    test r13d, MOD_CTRL
+    jz 31f
+    cmp r12d, 'c'               # ctrl+c: the selected text to the clipboard
+    jne 32f
+    call copy_selection
+    jmp 7f
+32: cmp r12d, 'a'               # ctrl+a: all of it selected
+    jne 31f
+    mov rdi, [rip + hc_md]
+    test rdi, rdi
+    jz 7f
+    call md_select_all
+    jmp 7f
+31: mov edi, [rip + g_lh]
     cmp r12d, KEY_DOWN
     je 4f
-    mov edi, -1
+    neg edi
     cmp r12d, KEY_UP
     je 4f
-    mov edi, 10
+    mov edi, [rip + g_cv + CV_h]
+    shr edi, 2
     cmp r12d, KEY_PAGEDOWN
     je 4f
-    mov edi, -10
+    neg edi
     cmp r12d, KEY_PAGEUP
     je 4f
     jmp 6f
-4:  call scroll_lines
+4:  call scroll_px
     jmp 7f
 5:  cmp r12d, 'i'               # ctrl+i: Show Hover again focuses the card
     jne 6f
@@ -1496,6 +1547,29 @@ FN hovercard_key
 7:  mov dword ptr [rip + g_dirty], 1
     mov eax, 1
     EPILOGUE
+
+# copy_selection(): the card's selected text to the clipboard
+copy_selection:
+    PROLOGUE 32
+    mov rdi, [rip + hc_md]
+    test rdi, rdi
+    jz 9f
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, SB_SIZE
+    call memset
+    mov rdi, [rip + hc_md]
+    lea rsi, [rsp]
+    call md_sel_text
+    test eax, eax
+    jz 8f
+    mov rdi, [rsp + SB_ptr]
+    mov rsi, [rsp + SB_len]
+    xor edx, edx
+    call ed_clip_set
+8:  lea rdi, [rsp]
+    call sb_free
+9:  EPILOGUE
 
 # FN hovercard_point(line, col): the pointer moves over that place of the editor's text (hover-at;
 # columns as bytes on a line without tabs); hovercard_xy(line, col) -> eax x, edx y of it
@@ -1600,7 +1674,27 @@ FN hovercard_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    call collect
+    mov rdi, [rip + hc_md]      # the selected text, when there is one
+    test rdi, rdi
+    jz 31f
+    lea rdi, [rip + hc_new]
+    call sb_clear
+    mov rdi, [rip + hc_md]
+    lea rsi, [rip + hc_new]
+    call md_sel_text
+    test eax, eax
+    jz 31f
+    mov rdi, r12
+    lea rsi, [rip + .Ld_selected]
+    call sb_push_cstr
+    mov rdi, r12
+    mov rsi, [rip + hc_new + SB_ptr]
+    mov rdx, [rip + hc_new + SB_len]
+    call sb_push
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+31: call collect
     xor ebx, ebx
 4:  cmp rbx, [rip + hc_nparts]
     jae 9f
@@ -1675,6 +1769,12 @@ sev_colors: .long T_ERROR, T_WARNING, T_ACCENT, T_MUTED
 .Lfour: .ascii "    "
 .Lnothing: .asciz "No hover information here"
 .Ld_none: .asciz "card=none\n"
+.Ld_selected: .asciz "selected: "
+.Lrule: .asciz "\n\n---\n\n"
+.Lstrong: .asciz "**"
+.Lnbsp: .asciz "&nbsp;"
+.Lescaped: .asciz "\\`*_{}[]<>()#+-.!|~&"
+
 .Ld_asking: .asciz "card=asking"
 .Ld_shown: .asciz "card=shown"
 .Ld_pointer: .asciz " kind=pointer"

@@ -78,6 +78,26 @@ class Hover(lang.Lang):
                                'wait 300', 'wait 500', 'print-hover-card'], exts=root, files=('a.rs',))
         self.assertEqual(self.sections(out), ['section ext fake/zebra: Z', 'section ext fake/alpha: A'], out)
 
+    def test_markdown_renders_selects_and_copies(self):
+        root = self.work / 'lang'
+        self.provider({'hello': 'hello 1 hover-query markdown',
+                       'answers': {'hover-query': {'body': hover(0, 0, 0, 0, '**bold** text')}}},
+                      'hover = *.rs\n', name='alpha', root=root)
+        out = self.run_editor(['wait-ext fake/alpha running', 'wait 200', 'key ctrl+i', 'wait 300', 'key ctrl+i',
+                               'key ctrl+a', 'print-hover-card', 'key ctrl+c', 'key Escape', 'key ctrl+End',
+                               'key ctrl+v', 'echo ===', 'print-doc'], exts=root, files=('a.rs',))
+        self.assertIn('selected: bold text', out)
+        doc = out[out.index('===') + 1:]
+        self.assertIn('bold text', '\n'.join(doc), out)
+
+    def test_plain_text_shows_as_it_is(self):
+        root = self.work / 'lang'
+        self.provider({'hello': 'hello 1 hover-query', 'answers': {'hover-query': {'body': hover(0, 0, 0, 0, '**x** [y]')}}},
+                      'hover = *.rs\n', name='alpha', root=root)
+        out = self.run_editor(['wait-ext fake/alpha running', 'wait 200', 'key ctrl+i', 'wait 300', 'key ctrl+i',
+                               'key ctrl+a', 'print-hover-card'], exts=root, files=('a.rs',))
+        self.assertIn('selected: **x** [y]', out)
+
     def test_identical_texts_show_once_and_a_v1_answer_joins(self):
         root = self.two(a='same', b='same')
         self.provider({'hello': 'hello 1', 'hover_text': 'from v1'}, 'definition = *.go\n', name='gamma',

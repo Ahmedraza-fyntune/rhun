@@ -859,6 +859,21 @@ FN cmd_focus_results
 
 # ---------------- hierarchies ----------------
 
+# FN results_cancel_roots() -> eax 1 when a hierarchy's roots were still asked for: withdrawn
+FN results_cancel_roots
+    mov rsi, [rip + rh_id]
+    test rsi, rsi
+    jz 8f
+    push rbx
+    mov rdi, [rip + rh_ext]
+    mov qword ptr [rip + rh_id], 0
+    call query_withdraw
+    pop rbx
+    mov eax, 1
+    ret
+8:  xor eax, eax
+    ret
+
 # FN cmd_call_hierarchy(), cmd_type_hierarchy(): the roots at the cursor, asked of the first running
 # provider whose patterns match the document
 FN cmd_call_hierarchy
