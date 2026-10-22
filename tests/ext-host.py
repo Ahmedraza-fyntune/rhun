@@ -73,7 +73,7 @@ CONFIG = ('[ui]\nsidebar = false\nagents_panel = false\n[editor]\ncursor_blink =
 CMDS = ('echo.shout,echo.hi,echo.toast,echo.stale,echo.status,echo.open,echo.bad,echo.mb,echo.sel,echo.relopen,'
         'echo.diag,echo.nodiag,echo.baddiag,echo.stalediag,echo.reg,echo.opt,echo.optoff,echo.optsave,'
         'echo.badopt,echo.choose,echo.ask,echo.term,echo.cmd,echo.badcmd,echo.die,echo.termcmd,echo.emptymark,'
-        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.greet,'
+        'echo.countdiag,echo.bidi,echo.first,echo.pwrite,echo.hread,echo.swrite,echo.net,echo.exec,echo.git,echo.greet,'
         'echo.view,echo.badview,echo.unview,echo.manyviews,echo.staleview,echo.faredit,echo.apply,echo.applystale,'
         'echo.applyoverlap')
 
