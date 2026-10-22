@@ -387,7 +387,11 @@ FN save_tick
     test rax, rax
     jnz 1f
     test edx, edx
-    jz .Lst_commit
+    jnz 2f
+    mov rdi, r12
+    call builtin_format_doc
+    jmp .Lst_commit
+2:
     lea rax, [rip + .Lchoose]
     mov [rbx + SJ_warning], rax
     jmp .Lst_commit

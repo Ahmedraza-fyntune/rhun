@@ -833,6 +833,12 @@ FN ext_provider_begin
     jne .Lpb_unavailable
     cmp r12, PP_RENAME
     je 8f
+    cmp r12, PP_FORMAT
+    jne 10f
+    call builtin_format_try
+    test eax, eax
+    jnz 9f
+10:
     lea rdi, [rip + .Lnone]
     call app_toast
     jmp 9f

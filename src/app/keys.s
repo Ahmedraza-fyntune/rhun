@@ -2465,5 +2465,11 @@ g_commands:
     COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
     COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""
     COMMAND fold_level_3, "Fold Level 3", cmd_fold_level_3, ""
+    # Formatters
+    COMMAND format_json, "Format: JSON", cmd_format_json, ""
+    COMMAND format_xml, "Format: XML", cmd_format_xml, ""
+    COMMAND format_sql, "Format: SQL", cmd_format_sql, ""
+    COMMAND format_php, "Format: PHP", cmd_format_php, ""
+    COMMAND format_ini, "Format: INI", cmd_format_ini, ""
     .quad 0, 0, 0, 0
 
