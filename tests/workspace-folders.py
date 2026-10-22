@@ -285,5 +285,141 @@ class Folders(lifecycle.Base):
         self.assertIn('[rt/st]\nsetting.style = c', wsfile.read_text())   # kept when saved again
 
 
+    # ---------------- round-3 review ----------------
+
+    def test_a_workspace_file_on_its_own_project(self):
+        """A workspace file whose first folder is the window's project: its folders join and its
+        sections are kept when saved again (app_switch_project keeps an unchanged project)."""
+        wsfile = self.work / 'team.rhun-workspace'
+        wsfile.write_text(f'[folders]\npath = {self.app}\npath = {self.lib}\n\n[rt/x]\nsetting.k = 1\n')
+        out = self.run_ws([self.app], ['print-folders', f'open {wsfile.as_posix()}', 'wait 200', 'print-folders',
+                                       'workspace-save again'])
+        f = self.folders(out)
+        self.assertEqual([x['name'] for x in f], ['proj', 'proj', 'lib'], out)
+        self.assertIn('[rt/x]\nsetting.k = 1', (self.app / 'again.rhun-workspace').read_text())
+
+    def test_indented_sections_survive_save_as(self):
+        wsfile = self.work / 'team.rhun-workspace'
+        wsfile.write_text(f'[folders]\npath = {self.app}\n  [rt/x]\nsetting.k = 2\n')
+        self.run_ws([wsfile], ['workspace-save again'])
+        self.assertIn('[rt/x]\nsetting.k = 2', (self.app / 'again.rhun-workspace').read_text())
+
+    def test_a_workspace_files_missing_first_folder(self):
+        wsfile = self.work / 'team.rhun-workspace'
+        (self.work / 'plain').write_text('x\n')
+        wsfile.write_text(f'[folders]\npath = {self.work / "gone"}\npath = {self.work / "plain"}\n'
+                          f'path = {self.lib}\npath = {self.app}\n')
+        out = self.run_ws([self.app], [f'open {wsfile.as_posix()}', 'wait 200', 'print-folders'])
+        self.assertEqual([x['name'] for x in self.folders(out)], ['lib', 'proj'], out)
+
+    def test_a_relative_folder_named_like_a_link(self):
+        (self.work / 'rhun-lib').mkdir()
+        self.env['RES_ARGS'] = ''
+        script = self.work / 'a.rsc'
+        script.write_text('wait 200\nprint-folders\nquit\n')
+        r = subprocess.run([str(host.EXE), 'proj', 'rhun-lib', '--headless', '1000x700', '--script', str(script)],
+                           env=self.env, capture_output=True, timeout=60, cwd=self.work)
+        out = r.stdout.decode(errors='replace').splitlines()
+        self.assertEqual([x['name'] for x in self.folders(out)], ['proj', 'rhun-lib'], out)
+
+    def test_remove_folder_follows_the_active_file_outside_the_explorer(self):
+        other = self.work / 'other'
+        (other / 'o').mkdir(parents=True)
+        # a right click on other/o selects it in the explorer; then lib's file is the active one
+        out = self.run_ws([self.app, self.lib, other], [
+            'cmd focus_explorer', 'wait 50', 'click 60 318 right', 'key Escape', f'open {self.lib.as_posix()}/pkg/p.go', 'wait 100',
+            'cmd remove_workspace_folder', 'wait 100', 'print-folders'])
+        self.assertEqual([x['name'] for x in self.folders(out)], ['proj', 'other'], out)
+
+    def test_reveal_in_a_workspace_folder(self):
+        out = self.run_ws([self.app, self.lib], ['cmd focus_explorer', 'cmd quick_open', 'type pkg/p.go',
+                                                 'key Return', 'wait 200', 'print-explorer'])
+        self.assertIn('    p.go', out)
+
+
+    def test_save_as_into_another_repository(self):
+        self.git_repos()
+        lib, app = self.lib.as_posix(), self.app.as_posix()
+        out = self.run_ws([self.app, self.lib], [
+            f'open {app}/src/main.rs', 'wait 100', 'wait-git', 'print-git', 'cmd save_as', 'key ctrl+a',
+            f'type {lib}/moved.rs', 'key Return', 'wait 200', 'wait-git', 'print-git'])
+        git = [l for l in out if l.startswith('git ')]
+        self.assertIn('branch=main', git[0], out)
+        self.assertIn('branch=feature', git[1], out)
+
+    def test_a_repository_inside_the_one_shown(self):
+        import shutil
+        if not shutil.which('git'):
+            self.skipTest('git')
+        (self.work / 'config/rhun/config').write_text(host.CONFIG.replace('enabled = false', 'enabled = true'))
+        outer = self.work / 'outer'
+        (outer / 'src').mkdir(parents=True)
+        (outer / 'src/x.txt').write_text('x\n')
+        (outer / 'nested').mkdir()
+        (outer / 'nested/f.txt').write_text('one\n')
+        for repo in (outer / 'nested', outer):
+            g = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t']
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True, env=self.env)
+            subprocess.run(g + ['add', 'src' if repo == outer else '-A'], check=True, env=self.env)
+            subprocess.run(g + ['commit', '-qm', 'one'], check=True, env=self.env)
+        (outer / 'nested/f.txt').write_text('two\n')
+        nested = (outer / 'nested').as_posix()
+        out = self.run_ws([outer / 'src', outer / 'nested'], [
+            'wait-git', f'print-vcs {nested}/f.txt', f'open {nested}/f.txt', 'wait 100', 'wait-git',
+            f'open {(outer / "src/x.txt").as_posix()}', 'wait 100', 'wait-git', 'print-repos',
+            f'print-vcs {nested}/f.txt'])
+        vcs = [l.split(' ')[0] for l in out if l.startswith('vcs=')]
+        self.assertEqual(vcs, ['vcs=M', 'vcs=M'], out)
+        self.assertEqual([r['shown'] for r in self.repos(out)], ['1', '0'], out)
+
+    def test_the_shown_repositorys_line_follows_its_branch(self):
+        import shutil, socket, tempfile, time
+        if os.name == 'nt':
+            self.skipTest('unix control socket')
+        self.git_repos()
+        short = Path(tempfile.mkdtemp(prefix='rg-', dir='/tmp'))
+        sock = short / 'c.sock'
+
+        def ctl(line):
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(str(sock))
+            s.sendall(line.encode() + b'\n')
+            s.shutdown(socket.SHUT_WR)
+            data = b''
+            s.settimeout(15)
+            while chunk := s.recv(65536):
+                data += chunk
+            s.close()
+            return data.decode(errors='replace').splitlines()
+
+        proc = subprocess.Popen([str(host.EXE), str(self.app), str(self.lib), '--headless', '1000x700',
+                                 '--control', str(sock)], env=self.env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            end = time.time() + 10
+            while not sock.exists() and time.time() < end:
+                time.sleep(0.05)
+            ctl(f'open {self.lib.as_posix()}/pkg/p.go')
+            ctl('wait-git')
+            self.assertEqual([r['shown'] for r in self.repos(ctl('print-repos'))], ['0', '1'])
+            subprocess.run(['git', '-C', str(self.lib), 'checkout', '-qb', 'other'], check=True, env=self.env)
+            branch = None
+            end = time.time() + 10
+            while time.time() < end:
+                ctl('wait-git')
+                branch = self.repos(ctl('print-repos'))[1]['branch']
+                if branch == 'other':
+                    break
+                time.sleep(0.1)
+            self.assertEqual(branch, 'other')
+            ctl('quit')
+            proc.wait(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            shutil.rmtree(short, ignore_errors=True)
+
+
 if __name__ == '__main__':
     unittest.main()

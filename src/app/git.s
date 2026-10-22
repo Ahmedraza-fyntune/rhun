@@ -96,6 +96,12 @@ FN git_repository_id
 
 # git_common_dir() -> the repository's common .git directory, or 0 outside a repository
 FN git_common_dir
+    mov rax, [rip + commondir]
+    ret
+
+# git_project_common_dir() -> the project's repository's common .git directory (agents), whichever
+#   repository is shown, or 0
+FN git_project_common_dir
     mov rax, [rip + prim_common]
     ret
 
@@ -1647,8 +1653,16 @@ FN git_status_of
     call git_rel
     test rax, rax
     jz 8f
-    mov rdi, rax
-    mov rsi, rdx
+    mov r12, rax
+    mov r13, rdx
+    # a repository inside this one (another workspace folder's) has its own files
+    mov rdi, rbx
+    mov rsi, [rip + g_git_rootlen]
+    call gitrepos_owns
+    test eax, eax
+    jnz 8f
+    mov rdi, r12
+    mov rsi, r13
     xor eax, eax
     xor edx, edx
     cmp qword ptr [rip + sused], 0
@@ -1755,6 +1769,8 @@ docs_reset:
     cmp qword ptr [rax + TAB_kind], TAB_DOC
     jne 2f
     mov rdi, [rax + TAB_doc]
+    cmp dword ptr [rdi + DOC_gsrc], 0
+    jne 2f                      # an extension's quick-diff base stays (git_drop_base_ext)
     call drop_base
     mov dword ptr [rdi + DOC_gstate], GS_NONE
 2:  inc rbx

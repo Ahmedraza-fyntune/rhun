@@ -435,6 +435,23 @@ class Testing(unittest.TestCase):
         self.assertTrue(self.logged('covrepeat ok '), self.fake_log()[-5:])
         self.assertTrue([l for l in out if l.startswith('covered=1 partial=0 missed=0 lines=1048576:C')], out)
 
+    def test_a_reopened_file_keeps_its_glyphs_and_tints(self):
+        # discovered and covered after an edit was saved; the file closed and opened again is a new
+        # document whose versions start over: its lines are the file's as it is
+        p = self.proj / 'a_test.go'
+        out = self.run_editor(['cmd goto_line', 'type 14', 'key Return', 'key End', 'type // end', 'cmd save',
+                               *EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 100', 'print-gutter',
+                               'cmd close_tab', 'open ' + p.as_posix(), 'wait 200', 'echo @reopened', 'print-gutter'])
+        after = out[out.index('@reopened'):]
+        self.assertIn('line=7 glyph=failed item=go:example/pkg.TestB', after)
+        self.assertIn('cov=3:C,5:C,6:P,7:C', after)
+
+    def test_idle_after_coverage_draws_nothing(self):
+        out = self.run_editor([*EXPAND, 'cmd test_coverage_all', 'wait-tests', 'wait 500', 'print-frames',
+                               'wait 1500', 'print-frames'])
+        frames = [int(l.split('=')[1].split()[0]) for l in out if l.startswith('frames=')]
+        self.assertEqual(frames[1], 0, out)     # print-frames counts since the last one
+
     def test_coverage_tints_belong_to_their_file(self):
         # a document opened after the covered one closed (its memory may be the same) has none
         (self.proj / 'b.go').write_text(SOURCE.replace('pkg', 'other'), encoding='utf-8')
