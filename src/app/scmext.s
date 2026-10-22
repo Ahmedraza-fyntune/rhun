@@ -919,11 +919,27 @@ qd_reply:
     # a copy of the text: a click on the file in the provider's panel opens its diff
     mov rdi, [r12 + DOC_qbase]
     call mem_free
-    mov rdi, r14
-    mov rsi, r15
-    call mem_dup
+    # line ends as the document has them: a CR before a LF goes (as git_set_base_ext hashes it)
+    lea rdi, [r15 + 1]
+    call mem_alloc
+    xor ecx, ecx
+    xor edx, edx
+3:  cmp rcx, r15
+    jae 5f
+    movzx r8d, byte ptr [r14 + rcx]
+    inc rcx
+    cmp r8d, 13
+    jne 4f
+    cmp rcx, r15
+    jae 4f
+    cmp byte ptr [r14 + rcx], 10
+    je 3b
+4:  mov [rax + rdx], r8b
+    inc rdx
+    jmp 3b
+5:  mov byte ptr [rax + rdx], 0
     mov [r12 + DOC_qbase], rax
-    mov [r12 + DOC_qblen], r15
+    mov [r12 + DOC_qblen], rdx
     mov rdi, r12
     mov rsi, r14
     mov rdx, r15

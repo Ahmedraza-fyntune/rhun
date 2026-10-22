@@ -1015,6 +1015,10 @@ reload_changed:
     je 9f                      # includes our own saves
     cmp rax, [rbx + DOC_disk_seen]
     je 9f
+    mov rdi, rbx                # an owned custom editor's model, clean or dirty: its extension hears
+    call ce_disk_changed        # editor-changed and decides (customed.s)
+    test eax, eax
+    jnz 9f
     mov rdi, rbx
     call doc_dirty
     test eax, eax

@@ -6,7 +6,8 @@ editor-dirty, and answers editor-save in parts of 3 bytes (1 MB for files of 64 
 upper-cases the first line on a click with replace. Both draw "N bytes: XX XX ..." in their view.
 EDFAKE_LOG names a file (in the state folder) that receives every line rhun sends. EDFAKE_MODE:
 refuse (editor-open fails), badpart (a save part without its MORE line), crashclick (the second
-click ends the program)."""
+click ends the program), dirtysave (the model changes again just before a save's last part).
+"""
 import os
 import queue
 import sys
@@ -197,6 +198,14 @@ def main():
             reply = chunk if MODE == 'badpart' else b'%d\n' % more + chunk
             if not more:
                 e['saved'] = e['snap']
+            if MODE == 'dirtysave' and not more and f[3] == b'save':
+                # the model changes again while the save's last part is on its way
+                e['data'] = bytes([e['data'][0] ^ 0x0F]) + e['data'][1:]
+                with lock:
+                    did = next_id[0]
+                    next_id[0] += 1
+                    answers[did] = (None, 'editor-dirty')
+                send(f'{did} editor-dirty {cdoc} 1')
             send(f'ok {rid} {len(reply)}', reply)
         elif verb in ('editor-undo', 'editor-redo', 'editor-revert'):
             work.put((verb, rid, int(f[2])))

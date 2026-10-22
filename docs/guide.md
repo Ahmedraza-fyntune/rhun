@@ -1070,7 +1070,7 @@ of them:
   conversation view. Settings > Agents has a switch for each such source.
 - **Talk to those agents.** When the extension allows it, its sessions get a box under the
   conversation: Enter sends (Shift+Enter for a new line), Stop interrupts the agent while it
-  works, and the agent's questions show as cards with a button per answer (keys 1 to 9 pick).
+  works, and the agent's questions show as cards with a button per answer (keys 1 to 9 pick, or the arrow keys and Enter).
   The `+` button in the panel's header starts a new session of that agent.
 - **The Review tab.** An extension, or an agent through the MCP bridge, can propose a change. rhun
   shows it in a Review tab: each file with its added and removed lines, each change with a few
@@ -1402,6 +1402,9 @@ filters (such as Python's "Uncaught Exceptions").
 | lldb-dap (C, C++) | tested (Xcode's, through `xcrun`) | needs a native machine (no ptrace in Docker under Rosetta) | not tested |
 | Delve (Go) | tested (a program, a test at the cursor after a build task) | needs a native machine (as above) | not tested (its TCP connection, and `server =`, tested with a fake adapter under Wine) |
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
+
+In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
+reached over TCP (`transport = tcp`, as Delve is) does not run in a remote window yet.
 
 Extensions declare debuggers with `[debugger.TYPE]` sections and can start sessions themselves
 (feature `debug`, docs/extensions/v1.1.md "Debuggers").

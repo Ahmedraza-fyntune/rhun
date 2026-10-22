@@ -740,6 +740,19 @@ file_target:
     setne al
     ret
 
+# FN explorer_context_target() -> rax g_explorer_target when a command runs from the explorer (its
+#   menu, or with its focus) and something is selected, else 0 (the active file is the target)
+FN explorer_context_target
+    xor eax, eax
+    cmp byte ptr [rip + g_explorer_target], 0
+    je 9f
+    cmp dword ptr [rip + g_menu_cmd], 0
+    jne 1f
+    cmp dword ptr [rip + g_focus], FOCUS_EXPLORER
+    jne 9f
+1:  lea rax, [rip + g_explorer_target]
+9:  ret
+
 # explorer_delete_target(): remove the confirmed file or directory and its contents
 FN explorer_delete_target
     push rbx
@@ -911,7 +924,27 @@ explorer_reveal:
     mov r12, [rax + DOC_path]
     test r12, r12
     jz 9f
-    # only files under the project
+    # workspace folders: from the folder holding it (the root has no folder of its own)
+    cmp dword ptr [rip + root_multi], 0
+    je 10f
+    xor r14d, r14d
+11: cmp r14, [rbx + N_kids + VEC_len]
+    jae 9f
+    mov rax, [rbx + N_kids + VEC_ptr]
+    mov r15, [rax + r14*8]
+    inc r14
+    mov rdi, r12
+    mov rsi, [r15 + N_path]
+    call app_path_inside
+    test eax, eax
+    jz 11b
+    mov rbx, r15
+    cmp dword ptr [rbx + N_open], 0
+    jne 10f
+    mov dword ptr [rbx + N_open], 1
+    mov rdi, rbx
+    call node_load
+10: # only files under the project
     mov rdi, [rbx + N_path]
     xor ecx, ecx
 1:  movzx eax, byte ptr [rdi + rcx]

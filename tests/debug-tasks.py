@@ -16,7 +16,8 @@ def task(tid, label, cmd):
     head = f'{tid} shell {len(label)} {len(cmd.encode())} 0 0\n'
     return head.encode() + label.encode() + cmd.encode()
 TASKS = [task('build', 'Build', 'echo built > built.txt'), task('fail', 'Fail', 'echo nope; exit 2'),
-         task('cleanup', 'Cleanup', 'echo cleaned > cleaned.txt')]
+         task('cleanup', 'Cleanup', 'echo cleaned > cleaned.txt'),
+         task('slowa', 'Slow A', 'sleep 1.5; echo a > a.txt'), task('slowb', 'Slow B', 'sleep 4; echo b > b.txt')]
 out.write(b'hello 1 terminals tasks\n'); out.flush()
 for line in inp:
     if line.startswith(b'0 ready '):
@@ -94,6 +95,33 @@ class Tasks(debughost.DebugHost):
                                               'wait-debug ended', 'wait 500', 'print-dialog', 'dialog yes',
                                               'wait 1500'])
         self.assertEqual((self.proj / 'cleaned.txt').read_text().strip(), 'cleaned')
+
+    def test_debug_start_waits_while_a_launch_is_prepared(self):
+        # review: an extension's debug-start during the before task replaced the launch's configuration
+        state = self.work / 'state/rhun/extensions/rhun-tests--debugfake'
+        state.mkdir(parents=True)
+        program = self.scenario(name='other.json').as_posix()
+        (state / 'mode.json').write_text(json.dumps({'start': [{'name': 'From ext', 'leaves': [
+            ['s', 'type', 'fake'], ['s', 'program', program]]}]}), encoding='utf-8')
+        out = self.run_tasks('before = slowa\n', ['wait 300', 'debug-start Run', 'wait 500', 'dialog yes',
+                                                   'cmd rhun-tests/debugfake.start', 'wait 2500', 'print-dialog',
+                                                   'dialog yes', 'wait-debug ended', 'print-debug'])
+        log = (state / 'debugfake.log').read_text(encoding='utf-8').splitlines()
+        self.assertIn('error 1 busy a launch is being prepared', log)
+        self.assertEqual([self.field(l, 'name') for l in self.debug_lines(out)], ['Run'], out)
+
+    def test_an_abandoned_launchs_task_does_not_continue_the_next(self):
+        # review: A's before task ending went on with B's launch before B's own task was done
+        self.scenario()
+        self.launch_ini('[A]\ntype = fake\nprogram = scenario.json\nbefore = slowa\n'
+                        '[B]\ntype = fake\nprogram = scenario.json\nbefore = slowb\n')
+        out = self.run_editor(['wait 300', 'debug-start A', 'wait 300', 'dialog yes', 'wait 200', 'debug-stop',
+                               'debug-start B', 'wait 2500', 'print-debug', 'echo --', 'wait 3000', 'dialog yes',
+                               'wait-debug ended', 'print-debug'], exts=self.exts())
+        first, second = out[:out.index('--')], out[out.index('--') + 1:]
+        self.assertEqual(self.debug_lines(first), [], first)
+        self.assertEqual([self.field(l, 'name') for l in self.debug_lines(second)], ['B'], second)
+        self.assertTrue((self.proj / 'b.txt').exists())
 
 
 if __name__ == '__main__':

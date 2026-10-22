@@ -15,6 +15,8 @@
 
 .bss
 .p2align 3
+rs_gen: .long 0                 # before tasks: the launch a task's end belongs to
+rs_pad: .long 0
 rs_state: .long 0               # debug-resolve: 0 none, 1 the extension starts, 2 asked
 rs_dbg: .long 0                 # the debugger
 rs_ext: .quad 0
@@ -122,7 +124,16 @@ FN dbgx_h_debug_start
     call xp_need
     test eax, eax
     jz 9f
-    call xp_nfields
+    # a launch being prepared (its extension, its before task) keeps its configuration in g_lc_*:
+    #   nothing is parsed meanwhile
+    call dbgx_resolving
+    test eax, eax
+    jz 10f
+    mov rdi, r12
+    lea rsi, [rip + .Le_preparing]
+    call xp_reply_error
+    EPILOGUE
+10: call xp_nfields
     cmp rax, 4
     jne .Lds_syntax
     mov edi, 2
@@ -436,9 +447,10 @@ FN dbgx_before_begin
     mov rsi, rbx
     call sb_set_cstr_x
     mov dword ptr [rip + rs_state], 3
+    inc dword ptr [rip + rs_gen]
     mov rdi, rbx
     lea rsi, [rip + before_done]
-    xor edx, edx
+    mov edx, [rip + rs_gen]     # its end is ignored once this launch is abandoned
     call tasks_run_named
     test eax, eax
     jz 8f
@@ -453,11 +465,13 @@ FN dbgx_before_begin
 8:  mov eax, 1
     EPILOGUE
 
-# before_done(cookie, TASK_DONE | TASK_FAILED): the before task ended
+# before_done(launch generation, TASK_DONE | TASK_FAILED): the before task ended
 before_done:
     PROLOGUE
     cmp dword ptr [rip + rs_state], 3
     jne 9f                      # Stop abandoned the launch meanwhile
+    cmp edi, [rip + rs_gen]
+    jne 9f                      # an abandoned launch's task: another launch's runs
     mov dword ptr [rip + rs_state], 0
     cmp esi, TASK_DONE
     jne 1f
@@ -910,4 +924,5 @@ dbgx_v_debug_stop: .asciz "debug-stop"
 .Le_toobig_sp: .asciz " toobig 8 sessions"
 .Le_cancelled: .asciz " cancelled"
 .Le_busy: .asciz " busy"
+.Le_preparing: .asciz "busy a launch is being prepared"
 .Le_refused: .asciz " refused "

@@ -3037,11 +3037,10 @@ F DS_rit_seq, 4         # the runInTerminal request still owed an answer, 0 none
 F DS_vgen, 4            # bumped whenever the variable pool starts again (a stop, another frame)
 F DS_wgen, 4            # the last round of watch evaluations sent
 F DS_owner_ok, 4        # debug-start: the extension was told ok (debug-ended follows)
-F DS_pad2, 4
+F DS_wlist, 4           # the watch list's version its last round evaluated (g_dwlist)
 F DS_owner, 8           # debug-start: the EXT* that started it, 0 for the user's sessions
 F DS_owner_id, 8        # and its request still owed an answer, 0 none
 F DS_after, 8           # owned cstr: launch.ini's after task, run when the session ends, or 0
-F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_seq, 4             # the next request number
 F DS_epoch, 4           # bumped on every stop and resume
 F DS_flags, 4           # DSF_*
@@ -3063,6 +3062,8 @@ F DS_wq, SB_SIZE        # bytes to write to it
 F DS_wq_off, 8
 F DS_ebuf, SB_SIZE      # its error output: the line in progress
 F DS_etail, SB_SIZE     # and the last lines (for a crash message)
+F DS_obuf, SB_SIZE      # tcp: its standard output's line in progress
+F DS_prevvals, SB_SIZE  # the last stop's values: "PATH" TAB "VALUE" LF (changed values stand out)
 F DS_filters, SB_SIZE   # exception filters: "FILTER\tLABEL\tDEFAULT\n" lines
 F DS_threads, VEC_SIZE  # TH
 F DS_frames, VEC_SIZE   # FR of the focused thread
@@ -3454,7 +3455,7 @@ F NB_vy, 4              # where its cells were drawn last (physical px), for tes
 F NB_vh, 4
 F NB_sent, VEC_SIZE     # NBS2 records: per extension, the order of the cells it last heard (A3)
 F NB_rev, 8             # bumped by every cell operation and output change (what NB_dirty records)
-F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length and version, 24 bytes each
+F NB_snap, VEC_SIZE     # nb-save's snapshot: NBC*, its document's undo length, version and history hash (32 B)
 F NB_snaprev, 8         # NB_rev when nb-save's body was made
 F NB_openstamp, 8       # nb_stamp when a reload's nb-open went out
 ENDSTRUCT NB_SIZE
@@ -3497,6 +3498,7 @@ F NBC_mdy, 4
 F NBC_tx, 4              # x of its text's column 0 and y of its first line as last drawn, for tests
 F NBC_ty, 4
 F NBC_pad2, 4
+F NBC_mdbase, 8          # a hash of the notebook's path its relative links were set for
 ENDSTRUCT NBC_SIZE
 .equ NBCK_CODE, 0
 .equ NBCK_MARKUP, 1
@@ -3595,6 +3597,10 @@ F CE_skind, 4           # CEK_* of the save in progress
 F CE_dirtyat, 8         # owned: when it last said dirty (time_ms): its backup follows 30 s later
 F CE_bkdone, 4          # owned: the backup holds what it shows since it last said dirty
 F CE_restore, 4         # owned: its bytes come from its backup (opened with SOURCE backup) until saved
+F CE_gen, 8             # owned: one more with every editor-dirty (the model changed)
+F CE_savegen, 8         # CE_gen when the save or backup in progress asked its first part
+F CE_lost, 4            # its program ended: the next tick opens it again if the program runs again
+F CE_pad, 4
 ENDSTRUCT CE_SIZE
 .equ CEM_TEXT, 0
 .equ CEM_OWNED, 1

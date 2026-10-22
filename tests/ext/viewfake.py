@@ -404,6 +404,8 @@ def on_command(name):
     elif name == 'quicknofilter':
         quick_open([rec('flags', 'nofilter', b''),
                     qitems([qitem('s1', 'symbol one', extra=rec('hl', '0 6', b'')), qitem('s2', 'other')])])
+    elif name == 'quickmany':
+        quick_open([rec('title', data=b'Many'), qitems([qitem(f'i{i}', f'item {i}') for i in range(30)])])
     elif name == 'quickclose' and quick_q:
         request(f'quick-close {quick_q[-1]}')
     elif name == 'quickbad':
@@ -507,6 +509,23 @@ def on_command(name):
         patch(views['setup'], [rec('field', '', frec('name', 'text', 1, 2, 'Name', rec('value', f'{seq}', b'NORMAL')))])
     elif name == 'formbad' and views.get('setup'):
         patch(views['setup'], [rec('field', '', b'bad record\n')])
+    elif name == 'formmany' and views.get('setup'):           # 200 fields, then 200 others
+        patch(views['setup'], [rec('form', '200', b''.join(frec(f'k{i}', 'text', 1 + i, 1, 'K') for i in range(200)))])
+        patch(views['setup'], [rec('form', '200', b''.join(frec(f'j{i}', 'text', 1 + i, 1, 'J') for i in range(200)))])
+    elif name == 'formgrow' and views.get('setup'):           # 195 new keys in one patch: 201
+        patch(views['setup'], [rec('field', '', frec(f'g{i}', 'text', 5, 1, 'G')) for i in range(195)])
+    elif name == 'formdup' and views.get('setup'):
+        patch(views['setup'], [rec('form', '2', frec('a', 'text', 1, 1, 'A') + frec('a', 'text', 2, 1, 'A'))])
+    elif name == 'formwrap' and views.get('setup'):
+        bad = b'w text 1 1 200 18446744073709551417\nL'
+        patch(views['setup'], [rec('field', '', bad)])
+    elif name == 'formrev' and views.get('setup'):
+        f = [frec('go', 'button', 4, 1, 'Connect'), frec('mode', 'select', 3, 1, 'Mode', rec('options', data=b'fast\nsafe\nslow')),
+             frec('tls', 'check', 3, 1, 'Use TLS'), frec('notes', 'area', 2, 1, 'Notes'),
+             frec('port', 'number', 1, 1, 'Port'), frec('name', 'text', 1, 2, 'Name')]
+        patch(views['setup'], [rec('form', '6', b''.join(f))])
+    elif name == 'formdisable' and views.get('setup'):
+        patch(views['setup'], [rec('field', '', frec('name', 'text', 1, 2, 'Name', rec('disabled', '', b'')))])
     elif name == 'formless' and views.get('setup'):
         patch(views['setup'], [rec('form', '1', frec('go', 'button', 1, 1, 'Connect'))])
     elif name == 'tab':

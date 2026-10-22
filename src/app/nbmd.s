@@ -11,7 +11,8 @@
 .bss
 .p2align 3
 nbm_slot: .long 0               # rendered blocks drawn this frame
-nbm_pad: .long 0
+nbm_link: .long 0               # the link clicked this frame (nbm_link_md's), followed after drawing
+nbm_link_md: .quad 0
 nbm_sb: .zero SB_SIZE
 
 .text
@@ -19,7 +20,46 @@ nbm_sb: .zero SB_SIZE
 # nb_md_frame(): a new frame's blocks get their link ids from the first slot again
 FN nb_md_frame
     mov dword ptr [rip + nbm_slot], 0
+    mov qword ptr [rip + nbm_link_md], 0
     ret
+
+# nb_md_link_after(): the link clicked this frame is followed (or named in a toast when rhun cannot
+#   follow it), once the notebook is drawn: following it may switch projects and free the notebook
+FN nb_md_link_after
+    PROLOGUE
+    mov rbx, [rip + nbm_link_md]
+    test rbx, rbx
+    jz 9f
+    mov qword ptr [rip + nbm_link_md], 0
+    mov r12d, [rip + nbm_link]
+    mov rdi, rbx
+    mov esi, r12d
+    call md_link                # the target first: the document may go with the notebook
+    mov r13, rax
+    mov r14, rdx
+    lea rdi, [rip + nbm_sb]
+    call sb_clear
+    lea rdi, [rip + nbm_sb]
+    lea rsi, [rip + .Lno_link]
+    call sb_push_cstr
+    lea rdi, [rip + nbm_sb]
+    mov rsi, r13
+    mov rdx, r14
+    cmp rdx, 200
+    jbe 3f
+    mov edx, 200
+3:  call sb_push
+    lea rdi, [rip + nbm_sb]
+    xor esi, esi
+    call sb_push_byte
+    mov rdi, rbx
+    mov esi, r12d
+    call md_open_link
+    test eax, eax
+    jnz 9f
+    mov rdi, [rip + nbm_sb + SB_ptr]
+    call app_toast
+9:  EPILOGUE
 
 # nb_mark_edit(nb): NBC_edit on the cell in edit mode (its source shows), off on the others
 FN nb_mark_edit
@@ -50,7 +90,19 @@ FN nb_cell_md
     mov rax, [r12 + DOC_version]
     inc rax
     cmp rax, [rbx + NBC_mdver]
+    jne 10f
+    # the same text: its relative links follow the notebook to a new path (Save As)
+    mov rdi, [rbx + NBC_md]
+    test rdi, rdi
+    jz 7f
+    call nbm_path_hash
+    cmp rax, [rbx + NBC_mdbase]
     je 7f
+    mov [rbx + NBC_mdbase], rax
+    mov rdi, [rbx + NBC_md]
+    call nbm_base
+    jmp 7f
+10:
     mov [rbx + NBC_mdver], rax
     mov rdi, [rbx + NBC_md]
     mov qword ptr [rbx + NBC_md], 0
@@ -84,12 +136,38 @@ FN nb_cell_md
     mov [rbx + NBC_md], rax
     mov rdi, rax
     call nbm_base
+    call nbm_path_hash
+    mov [rbx + NBC_mdbase], rax
 6:  mov rdi, r14
     call mem_free
 7:  mov rax, [rbx + NBC_md]
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE
+
+# nbm_path_hash() -> rax a hash of the active notebook's path, 0 none
+nbm_path_hash:
+    push rbx
+    call nb_active
+    xor ecx, ecx
+    test rax, rax
+    jz 8f
+    mov rax, [rax + NB_host]
+    mov rbx, [rax + DOC_path]
+    test rbx, rbx
+    jz 8f
+    mov rcx, 0xcbf29ce484222325
+1:  movzx eax, byte ptr [rbx]
+    test eax, eax
+    jz 8f
+    xor rcx, rax
+    mov rax, 0x100000001b3
+    imul rcx, rax
+    inc rbx
+    jmp 1b
+8:  mov rax, rcx
+    pop rbx
+    ret
 
 # nbm_base(md): relative links and images name the active notebook's folder
 nbm_base:
@@ -178,36 +256,9 @@ FN nb_md_draw
     add rsp, 16
     test eax, eax
     js 8f
-    mov r12d, eax
-    mov rdi, rbx
-    mov esi, r12d
-    call md_open_link
-    test eax, eax
-    jnz 7f
-    # a link rhun cannot follow (an anchor, another scheme, a file that is not there)
-    mov rdi, rbx
-    mov esi, r12d
-    call md_link
-    mov r13, rax
-    mov r14, rdx
-    lea rdi, [rip + nbm_sb]
-    call sb_clear
-    lea rdi, [rip + nbm_sb]
-    lea rsi, [rip + .Lno_link]
-    call sb_push_cstr
-    lea rdi, [rip + nbm_sb]
-    mov rsi, r13
-    mov rdx, r14
-    cmp rdx, 200
-    jbe 3f
-    mov edx, 200
-3:  call sb_push
-    lea rdi, [rip + nbm_sb]
-    xor esi, esi
-    call sb_push_byte
-    mov rdi, [rip + nbm_sb + SB_ptr]
-    call app_toast
-7:  mov eax, 1
+    mov [rip + nbm_link], eax   # followed once the notebook is drawn (nb_md_link_after)
+    mov [rip + nbm_link_md], rbx
+    mov eax, 1
     EPILOGUE
 8:  xor eax, eax
     EPILOGUE

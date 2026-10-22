@@ -62,6 +62,26 @@ class Variables(debughost.DebugHost):
         self.assertIn('field=0', out)
         self.assertIn('  total = 7 : int', out)
 
+    def test_a_list_set_to_a_number_loses_its_elements(self):
+        # review: the answer has no variablesReference; the old elements stayed under 42
+        out = self.paused({'items': [5, 6, 7]}, ['debug-expand Locals/items', 'wait 300', 'print-vars', 'echo --',
+                                                 'debug-set Locals/items 42', 'wait 300', 'print-vars'])
+        first, second = out[:out.index('--')], out[out.index('--') + 1:]
+        self.assertIn('    [1] = 6 : int', first)
+        self.assertIn('  items = 42 : int', second)
+        self.assertFalse([l for l in second if l.strip().startswith('[')], second)
+
+    def test_nested_chunks_stay_open_across_stops(self):
+        # review: a range inside a range closed at the next stop
+        a = self.src.as_posix()
+        step = {'file': a, 'line': 6, 'function': 'main', 'locals': {'items': list(range(25000))}}
+        out = self.paused(None, ['debug-expand Locals/items', 'wait 300', 'debug-expand Locals/items/[10000..19999]',
+                                 'wait 200', 'debug-expand Locals/items/[10000..19999]/[11100..11199]', 'wait 300',
+                                 'debug-step over', 'wait-debug paused', 'wait 500', 'print-vars'],
+                          steps=[step, dict(step, line=7)])
+        names = [l.strip().split(' =')[0] for l in self.vars(out)]
+        self.assertIn('[11150]', names, out)
+
     def test_changed_values_stand_out(self):
         a = self.src.as_posix()
         steps = [{'file': a, 'line': 6, 'function': 'main', 'locals': {'total': 0, 'i': 0}},

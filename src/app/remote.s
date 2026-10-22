@@ -1200,9 +1200,7 @@ FN remote_disconnect
     sub rsp, 8
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 1f
-    lea rdi, [rip + .Lquit_req]
-    call rm_send_cstr
-    call rm_flush_now
+    call rm_quit_call
     mov dword ptr [rip + rm_ending], 1
     call rm_lost
     mov dword ptr [rip + rm_ending], 0
@@ -1214,10 +1212,20 @@ FN remote_quit
     sub rsp, 8
     cmp dword ptr [rip + g_remote_state], RS_UP
     jne 1f
-    lea rdi, [rip + .Lquit_req]
-    call rm_send_cstr
-    call rm_flush_now
+    call rm_quit_call
 1:  add rsp, 8
+    ret
+
+# rm_quit_call(): quit, answered: the agent has the request (and ends its session) before the
+#   transport is killed; one that does not answer within remote_call's wait is killed all the same
+rm_quit_call:
+    sub rsp, 8
+    lea rdi, [rip + .Lv_quit]
+    mov esi, 4
+    xor edx, edx
+    xor ecx, ecx
+    call remote_call
+    add rsp, 8
     ret
 
 # remote_sock_open(fd, port) -> 0 or -errno: a local TCP connection (remotefwd.s accepted it) becomes
@@ -1369,7 +1377,17 @@ FN remote_attach
     call .Lat_number            # FLAGS
     mov r12, rax
     call .Lat_number            # STATUS
-    mov r8, rax
+    push rax
+    push rax
+    xor eax, eax
+    test r14, r14
+    jle 44f
+    cmp byte ptr [r13], ' '
+    jne 44f
+    call .Lat_number            # CFAIL: its child could not confine itself (ragent.s)
+44: mov r9, rax
+    pop r8
+    pop r8
     mov rax, r12
     # the rest of the line
 4:  test r14, r14
@@ -1393,6 +1411,7 @@ FN remote_attach
 43: or dword ptr [rbx + CH_flags], CHF_SEEN
     mov qword ptr [rbx + CH_credit], MUX_WINDOW
     mov qword ptr [rbx + CH_grant], 0
+    mov [rbx + CH_cfail], r9d
     test eax, 1
     jz 42f
     or dword ptr [rbx + CH_flags], CHF_EXITED
@@ -3884,7 +3903,7 @@ rm_rq_ready: .long 0
 .Lv_connect: .asciz "connect "
 .Lrlog_attached: .asciz "attached to session "
 .Lrlog_attach: .asciz "the session has: "
-.Lquit_req: .asciz "0 quit 0\n"
+.Lv_quit: .asciz "quit"
 .p2align 3
 .Lno_extras: .quad 0
 .Lzero_sp: .asciz "0 "

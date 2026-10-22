@@ -242,6 +242,27 @@ class Markdown(ViewsBase):
         self.assertIn('pic-demo bad 2', out)
 
 
+    def test_repeated_headings_get_numbered_slugs(self):
+        path = self.work / 'doc.md'
+        path.write_text('# Same\n\ntext\n\n# Same\n\nmore\n\n## Same\n\n# Other one\n', encoding='utf-8')
+        out = self.run_editor([f'md-demo {path}', 'wait 50', 'md-anchor #same', 'md-anchor #same-1',
+                               'md-anchor #same-2', 'md-anchor #same-3', 'md-anchor #other-one'], exts=None, start=False)
+        ys = {l.split(' ')[1]: int(l.split(' ')[2]) for l in out if l.startswith('anchor ')}
+        self.assertEqual(ys['#same'], 0)
+        self.assertGreater(ys['#same-1'], ys['#same'])
+        self.assertGreater(ys['#same-2'], ys['#same-1'])
+        self.assertEqual(ys['#same-3'], -1)
+        self.assertGreater(ys['#other-one'], ys['#same-2'])
+
+    def test_unmatched_openers_parse_in_linear_time(self):
+        import time
+        text = '*a _b ~~c ' * 20000                                    # 200 KB, one paragraph
+        start = time.monotonic()
+        out = self.dump(text, 800)
+        took = time.monotonic() - start
+        self.assertTrue(out[0].startswith('blocks=1 '), out[0])
+        self.assertLess(took, 3.0)
+
 def self_text(line):
     return line.split(' text=', 1)[1]
 

@@ -1117,16 +1117,8 @@ rx_walk_cb:
     mov rdx, r14
     call sb_push
     call rx_wpath_end
-    # a link: what it leads to must be inside the folder (it is copied as what it leads to)
-    mov rdi, [rip + rx_wpath + SB_ptr]
-    lea rsi, [rip + rx_stat]
-    SYS SYS_lstat
-    test rax, rax
-    js 8f
-    mov eax, [rip + rx_stat + 24]
-    and eax, 0xf000
-    cmp eax, 0xa000
-    jne 22f
+    # what each entry leads to must be inside the folder (a link is copied as what it leads to);
+    # every entry is resolved, as Windows' stat follows reparse points and junctions unseen
     mov rdi, [rip + rx_wpath + SB_ptr]
     lea rsi, [rip + rx_lnkreal]
     call local_realpath
