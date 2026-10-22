@@ -296,6 +296,14 @@ class Prompts(unittest.TestCase):
                            'wait 300', 'print-agent-input'])
         self.assertEqual(out[-1], 'input=another focus=1 new=acme/gem pending=0')
 
+    def test_keys_in_a_new_draft_leave_the_hidden_card_alone(self):
+        # Codex review (round 4): the conversation's card is hidden while a new session is written
+        out = self.editor(['cmd focus_agents', 'print-agents 1', 'wait 300', 'cmd acme/gem.ask', 'wait 300',
+                           'agent-new acme/gem', 'key Escape', 'key Down', 'key Return', 'type 1', 'wait 300',
+                           'print-agent-input'])
+        self.assertFalse([l for l in self.agent_log() if l.startswith('ok 2') or l.startswith('error 2')])
+        self.assertIn('input=1 focus=1 new=acme/gem pending=0', out)
+
     def test_without_the_feature_there_is_no_box(self):
         out = self.editor(['print-agents 1', 'wait 300', 'cmd acme/gem.ask', 'wait 300',
                            'agent-prompt hello', 'wait 300', 'print-agent-input'], hello='hello 1 agents')

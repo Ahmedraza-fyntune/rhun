@@ -2870,7 +2870,10 @@ FN agents_key
     mov r12d, edi
     mov r13d, esi
     mov r14d, edx
-    call agents_ext_open        # AI (D4): 1 to 9 pick an option of the open session's card
+    call agentext_new_active    # AI (D4): a new session's draft hides the conversation and its card
+    test rax, rax
+    jnz 4f
+    call agents_ext_open        # 1 to 9 pick an option of the open session's card
     test rax, rax
     jz 4f
     mov rbx, rax
