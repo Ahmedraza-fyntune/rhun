@@ -144,6 +144,19 @@ class MarkdownPopups(ViewsBase):
         self.assertNotIn(' markdown ', self.card(out))
         self.assertTrue(h_md is None or h_md > 0)
 
+    def test_selecting_a_markdown_message_and_copying_it(self):
+        self.env['VIEWFAKE_MARKDOWN'] = '1'
+        (self.proj / 'note.txt').write_text('', encoding='utf-8')
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', 'print-notes'])
+        card = self.card(out)
+        x, y = map(int, card.split(' at=')[1].split(' ')[0].split(','))
+        w = int(card.split(' size=')[1].split('x')[0])
+        tx, ty = x + 32 + 2, y + 12 + 8                                 # the message's first line
+        out = self.run_editor(['cmd viewfake.notemd', 'wait 200', f'move {tx} {ty}', 'down',
+                               f'move {x + w - 40} {ty}', 'up', 'wait 50', 'key ctrl+c',
+                               f'open {self.proj / "note.txt"}', 'key ctrl+v', 'wait 100', 'print-doc'])
+        self.assertTrue(any(l.startswith('Indexed 12 files') for l in out), out)
+
     def test_a_node_tooltip_is_markdown_with_the_feature(self):
         self.env['VIEWFAKE_MARKDOWN'] = '1'
         out = self.run_editor(['print-view todo'])

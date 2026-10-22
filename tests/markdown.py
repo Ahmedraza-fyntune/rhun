@@ -162,6 +162,42 @@ class Markdown(ViewsBase):
             out = self.run_editor([f'print-md-body 400 {bad}'], exts=None, start=False)
             self.assertIn('none', out, text)
 
+    def test_images_from_files_under_the_base(self):
+        import struct, zlib
+
+        def png(w, h, rgba):
+            def chunk(kind, data):
+                c = kind + data
+                return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+            raw = b''.join(b'\0' + bytes(rgba) * w for _ in range(h))
+            return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)) +
+                    chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+        (self.work / 'pics').mkdir()
+        (self.work / 'pics/red.png').write_bytes(png(40, 20, (255, 0, 0, 255)))
+        (self.work / 'pics/wide.png').write_bytes(png(1200, 100, (0, 0, 255, 255)))
+        md = ('Before ![red dot](pics/red.png) after.\n\n![wide](pics/wide.png)\n\n'
+              '![remote](https://example.com/x.png) ![missing](pics/none.png)\n')
+        path = self.body(md, self.work.as_posix())
+        out = self.run_editor([f'print-md-body 400 {path}'], exts=None, start=False)
+        imgs = [l for l in out if l.startswith('item image ')]
+        self.assertEqual(len(imgs), 2, out)
+        self.assertEqual((self.field(imgs[0], 'w'), self.field(imgs[0], 'h')), ('40', '20'))
+        w, h = int(self.field(imgs[1], 'w')), int(self.field(imgs[1], 'h'))    # scaled to the width
+        self.assertTrue(390 <= w <= 400, w)
+        self.assertEqual(h, w * 100 // 1200)
+        t = [self_text(l) for l in self.texts(out)]
+        self.assertIn('remote', t)                                      # alt text: not fetched
+        self.assertIn('missing', t)
+        self.assertNotIn('red', t)
+        # drawn: the red box in the demo
+        shot = self.work / 'shot.ppm'
+        out = self.run_editor([f'md-demo-body {path}', 'wait 100', f'shot {shot}'], exts=None, start=False)
+        data = shot.read_bytes()
+        parts = data.split(b'\n', 3)
+        px = parts[3]
+        reds = sum(1 for i in range(0, len(px) - 2, 3) if px[i:i + 3] == b'\xff\x00\x00')
+        self.assertEqual(reds, 40 * 20)
+
     def test_relative_links_open_files_under_the_base(self):
         docs = self.proj / 'docs'
         docs.mkdir()
