@@ -4713,10 +4713,22 @@ FN complete_dump
     EPILOGUE
 
 # cp_dump_selected(sb): "\nselected label=L detail=D doc=TEXT resolved=0|1 replace=0|1
-# commit=CHARS suffix=S deprecated=0|1 waiting=0|1" (doc with its line breaks as \n)
+# commit=CHARS suffix=S deprecated=0|1 waiting=0|1" (doc with its line breaks as \n), only while
+# the list has items of a provider that agreed complete-items: v1's print-complete stays two lines
 cp_dump_selected:
     PROLOGUE
     mov r12, rdi
+    xor ecx, ecx
+71: cmp rcx, [rip + cp_items + VEC_len]
+    jae 9f
+    imul rax, rcx, CI_SIZE
+    add rax, [rip + cp_items + VEC_ptr]
+    inc rcx
+    mov rax, [rax + CI_ext]
+    test rax, rax
+    jz 71b
+    FEAT_TEST rax, FEAT_COMPLETE_ITEMS
+    jz 71b
     call selected_item
     test rax, rax
     jz 9f

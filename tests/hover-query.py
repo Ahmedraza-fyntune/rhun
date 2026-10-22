@@ -98,6 +98,40 @@ class Hover(lang.Lang):
                                'key ctrl+a', 'print-hover-card'], exts=root, files=('a.rs',))
         self.assertIn('selected: **x** [y]', out)
 
+    def card_actions(self, text, actions, markdown=False):
+        root = self.work / 'lang'
+        self.provider({'hello': 'hello 1 hover-query' + (' markdown' if markdown else ''),
+                       'answers': {'hover-query': {'body': hover(0, 0, 0, 0, text)}}},
+                      'hover = *.rs\n', name='alpha', root=root)
+        return self.run_editor(['wait-ext fake/alpha running', 'wait 200', 'key ctrl+i', 'wait 300', 'key ctrl+i',
+                                *actions], exts=root, files=('a.rs',))
+
+    def test_a_plain_url_keeps_its_characters(self):
+        out = self.card_actions('see https://example.com/a_b.c here', ['key ctrl+a', 'print-hover-card'])
+        self.assertIn('selected: see https://example.com/a_b.c here', out)
+
+    def test_copied_plain_indentation_is_ordinary_spaces(self):
+        out = self.card_actions('one\n    two', ['key ctrl+a', 'key ctrl+c', 'print-hover-card', 'key Escape',
+                                                 'key ctrl+End', 'key ctrl+v', 'echo ===', 'print-doc'])
+        i = out.index('selected: one')
+        self.assertEqual(out[i + 1], '    two', out)       # no no-break spaces
+        doc = '\n'.join(out[out.index('===') + 1:])
+        self.assertIn('one\n    two', doc)
+        self.assertNotIn('\u00a0', doc)
+
+    def test_a_long_code_line_scrolls_sideways(self):
+        out = self.card_actions('```\n' + 'x' * 300 + 'END\n```', ['print-hover-card', 'key Right', 'key Right',
+                                                                    'print-hover-card', 'key Left', 'key Left',
+                                                                    'key Left', 'print-hover-card'], markdown=True)
+        side = [l for l in out if l.startswith('sideways=')]
+        self.assertEqual(len(side), 3, out)
+        pos = [int(l.split('=')[1].split('/')[0]) for l in side]
+        most = int(side[0].split('/')[1])
+        self.assertGreater(most, 0, side)
+        self.assertEqual(pos[0], 0, side)
+        self.assertGreater(pos[1], 0, side)
+        self.assertEqual(pos[2], 0, side)
+
     def test_identical_texts_show_once_and_a_v1_answer_joins(self):
         root = self.two(a='same', b='same')
         self.provider({'hello': 'hello 1', 'hover_text': 'from v1'}, 'definition = *.go\n', name='gamma',

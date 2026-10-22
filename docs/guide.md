@@ -882,7 +882,7 @@ commands:
 
 When the pointer rests on a word, extensions that support it show a **hover card**: the problems
 there first, then what each extension says, formatted and wrapped to the card's width; move the
-pointer onto the card to scroll it, drag to select text, and click a link to follow it (with the
+pointer onto the card to scroll it (Shift+wheel for a long code line), drag to select text, and click a link to follow it (with the
 card focused by `ctrl+i`, `ctrl+a` selects all and `ctrl+c` copies). A **lightbulb** in the gutter marks a line with a problem that has a quick
 fix: click it, or press `shift+alt+.`, to fix it. The **Results** tab keeps the last 8 sets of
 references, hierarchies and Find in Files results (`ctrl+Enter` in Find in Files moves its list

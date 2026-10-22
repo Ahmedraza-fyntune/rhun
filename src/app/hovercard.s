@@ -51,6 +51,9 @@ hc_state: .long 0               # 0 none, 1 asking, 2 shown
 hc_kind: .long 0                # 0 pointer, 1 invoked
 hc_focus: .long 0               # an invoked card has the keyboard
 hc_scroll: .long 0              # its text's first pixel row shown
+hc_hscroll: .long 0             # and first pixel column (code lines do not wrap)
+hc_tw: .long 0                  # the text's width shown
+hc_cw: .long 0                  # the text's widest line (a code line may pass the width)
 hc_doc: .quad 0                 # the position: DOC*, its id and version, byte offset
 hc_docid: .quad 0
 hc_version: .quad 0
@@ -142,6 +145,7 @@ close:
     mov dword ptr [rip + hc_state], 0
     mov dword ptr [rip + hc_focus], 0
     mov dword ptr [rip + hc_scroll], 0
+    mov dword ptr [rip + hc_hscroll], 0
     mov qword ptr [rip + hc_leave], 0
     mov rdi, [rip + hc_md]      # the next card is made anew
     test rdi, rdi
@@ -1294,11 +1298,13 @@ FN hovercard_draw
     mov esi, eax
     call md_measure
     add eax, [rip + g_mt + 4*MI_4]   # a little room: laid out at its own widest line, a line's
-    cmp eax, [rsp + 40]              # last word could wrap
+    mov [rip + hc_cw], eax           # last word could wrap
+    cmp eax, [rsp + 40]
     jbe 14f
     mov eax, [rsp + 40]
 14: mov [rip + hc_mw], eax
 12: mov [rsp + 20], eax         # the text's width
+    mov [rip + hc_tw], eax
     mov rdi, [rip + hc_md]
     mov esi, eax
     call md_layout
@@ -1323,6 +1329,8 @@ FN hovercard_draw
     mov [rsp + 12], eax         # h
     xor edi, edi                # the scroll within the text
     call scroll_px
+    xor edi, edi
+    call hscroll_px
     # the place: under the word, above it without room, inside the window
     mov eax, [rip + hc_ax]
     mov ecx, [rip + g_cv + CV_w]
@@ -1380,11 +1388,18 @@ FN hovercard_draw
     call ui_in
     test eax, eax
     jz 7f
-    call wheel_xy
-    test edx, edx
-    jz 7f
+    call wheel_xy               # (sideways with Shift, or a sideways wheel: a long code line)
+    push rax
+    push rax
     mov edi, edx
+    test edi, edi
+    jz 61f
     call scroll_px
+61: pop rdi
+    pop rax
+    test edi, edi
+    jz 7f
+    call hscroll_px
 7:  # the frame
     mov edi, [rsp]
     mov esi, [rsp + 4]
@@ -1417,6 +1432,7 @@ FN hovercard_draw
     mov r8d, eax
     mov rdi, [rip + hc_md]
     mov esi, [rsp + 28]
+    sub esi, [rip + hc_hscroll]
     mov edx, [rsp + 32]
     mov ecx, [rip + hc_scroll]
     call md_select_mouse
@@ -1428,10 +1444,12 @@ FN hovercard_draw
     mov eax, ID_HC_LINKS
     push rax
     push rax
-    mov rdi, [rip + hc_md]
+    mov rdi, [rip + hc_md]      # moved left by the sideways scroll (the clip keeps the card)
     mov esi, [rsp + 16 + 28]
+    sub esi, [rip + hc_hscroll]
     mov edx, [rsp + 16 + 32]
     mov ecx, [rsp + 16 + 20]
+    add ecx, [rip + hc_hscroll]
     mov r8d, [rsp + 16 + 24]
     mov r9d, [rip + hc_scroll]
     call md_draw
@@ -1487,6 +1505,24 @@ scroll_px:
     mov dword ptr [rip + g_dirty], 1
 3:  ret
 
+# hscroll_px(n): the card's text moves sideways by n pixels, within its widest line
+hscroll_px:
+    mov eax, [rip + hc_hscroll]
+    add eax, edi
+    mov ecx, [rip + hc_cw]
+    sub ecx, [rip + hc_tw]
+    cmp eax, ecx
+    jle 1f
+    mov eax, ecx
+1:  test eax, eax
+    jns 2f
+    xor eax, eax
+2:  cmp eax, [rip + hc_hscroll]
+    je 3f
+    mov [rip + hc_hscroll], eax
+    mov dword ptr [rip + g_dirty], 1
+3:  ret
+
 # FN hovercard_key(keysym, cp, mods) -> eax 1 when the card took the key (the editor's keyboard):
 # a focused card scrolls with the arrows and pages and closes with Escape; otherwise Escape closes
 # it and any other key (but ctrl+i, which focuses it) closes it and goes on
@@ -1534,7 +1570,16 @@ FN hovercard_key
     neg edi
     cmp r12d, KEY_PAGEUP
     je 4f
+    mov edi, [rip + g_cw]       # Left/Right: sideways, four columns at a time
+    shl edi, 2
+    cmp r12d, KEY_RIGHT
+    je 41f
+    neg edi
+    cmp r12d, KEY_LEFT
+    je 41f
     jmp 6f
+41: call hscroll_px
+    jmp 7f
 4:  call scroll_px
     jmp 7f
 5:  cmp r12d, 'i'               # ctrl+i: Show Hover again focuses the card
@@ -1548,6 +1593,40 @@ FN hovercard_key
     mov eax, 1
     EPILOGUE
 
+# sel_text(sb) -> eax 1 with the card's selected text pushed to sb, as copied: the no-break spaces
+#   that keep plain text's indentation (push_plain) are ordinary spaces again
+sel_text:
+    push rbx
+    mov rbx, rdi
+    mov rsi, rdi
+    mov rdi, [rip + hc_md]
+    call md_sel_text
+    test eax, eax
+    jz 9f
+    mov rdi, [rbx + SB_ptr]     # in place: C2 A0 -> ' '
+    mov rcx, [rbx + SB_len]
+    xor esi, esi                # read
+    xor edx, edx                # write
+1:  cmp rsi, rcx
+    jae 3f
+    movzx eax, byte ptr [rdi + rsi]
+    inc rsi
+    cmp eax, 0xc2
+    jne 2f
+    cmp rsi, rcx
+    jae 2f
+    cmp byte ptr [rdi + rsi], 0xa0
+    jne 2f
+    inc rsi
+    mov eax, ' '
+2:  mov [rdi + rdx], al
+    inc rdx
+    jmp 1b
+3:  mov [rbx + SB_len], rdx
+    mov eax, 1
+9:  pop rbx
+    ret
+
 # copy_selection(): the card's selected text to the clipboard
 copy_selection:
     PROLOGUE 32
@@ -1558,9 +1637,8 @@ copy_selection:
     xor esi, esi
     mov edx, SB_SIZE
     call memset
-    mov rdi, [rip + hc_md]
-    lea rsi, [rsp]
-    call md_sel_text
+    lea rdi, [rsp]
+    call sel_text
     test eax, eax
     jz 8f
     mov rdi, [rsp + SB_ptr]
@@ -1674,14 +1752,34 @@ FN hovercard_dump
     mov rdi, r12
     mov esi, 10
     call sb_push_byte
-    mov rdi, [rip + hc_md]      # the selected text, when there is one
+    mov eax, [rip + hc_cw]      # "sideways=N/MAX" while a line is wider than the card
+    sub eax, [rip + hc_tw]
+    jle 30f
+    cmp dword ptr [rip + hc_state], 0
+    je 30f
+    mov [rsp], eax
+    mov rdi, r12
+    lea rsi, [rip + .Ld_sideways]
+    call sb_push_cstr
+    mov rdi, r12
+    mov esi, [rip + hc_hscroll]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, '/'
+    call sb_push_byte
+    mov rdi, r12
+    mov esi, [rsp]
+    call sb_push_u64
+    mov rdi, r12
+    mov esi, 10
+    call sb_push_byte
+30: mov rdi, [rip + hc_md]      # the selected text, when there is one
     test rdi, rdi
     jz 31f
     lea rdi, [rip + hc_new]
     call sb_clear
-    mov rdi, [rip + hc_md]
-    lea rsi, [rip + hc_new]
-    call md_sel_text
+    lea rdi, [rip + hc_new]
+    call sel_text
     test eax, eax
     jz 31f
     mov rdi, r12
@@ -1770,10 +1868,11 @@ sev_colors: .long T_ERROR, T_WARNING, T_ACCENT, T_MUTED
 .Lnothing: .asciz "No hover information here"
 .Ld_none: .asciz "card=none\n"
 .Ld_selected: .asciz "selected: "
+.Ld_sideways: .asciz "sideways="
 .Lrule: .asciz "\n\n---\n\n"
 .Lstrong: .asciz "**"
 .Lnbsp: .asciz "&nbsp;"
-.Lescaped: .asciz "\\`*_{}[]<>()#+-.!|~&"
+.Lescaped: .asciz "\\`*_{}[]<>()#+-.!|~&:"   # (: as well: no bare URL link)
 
 .Ld_asking: .asciz "card=asking"
 .Ld_shown: .asciz "card=shown"
