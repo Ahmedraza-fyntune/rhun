@@ -2268,6 +2268,57 @@ ag_confine:
     mov eax, CONFINED_NO
     EPILOGUE
 
+# freeport 0 -> a TCP port free on the host's 127.0.0.1, in decimal: ${port} of the debugger's tcp
+#   adapters, which listen there [debugger group]
+ag_freeport:
+    PROLOGUE 48
+    mov r12, rdi
+    mov edi, AF_INET
+    mov esi, SOCK_STREAM | SOCK_CLOEXEC
+    xor edx, edx
+    SYS SYS_socket
+    test rax, rax
+    js 8f
+    mov r13d, eax
+    xor eax, eax
+    mov [rsp], rax
+    mov [rsp + 8], rax
+    mov word ptr [rsp], AF_INET
+    mov dword ptr [rsp + 4], 0x0100007f
+    mov edi, r13d
+    lea rsi, [rsp]
+    mov edx, 16
+    SYS SYS_bind
+    test rax, rax
+    js 7f
+    mov dword ptr [rsp + 32], 16
+    mov edi, r13d
+    lea rsi, [rsp]
+    lea rdx, [rsp + 32]
+    SYS DSK_getsockname
+    test rax, rax
+    js 7f
+    movzx eax, word ptr [rsp + 2]
+    rol ax, 8
+    mov [rsp + 40], rax
+    mov edi, r13d
+    SYS SYS_close
+    lea rdi, [rip + ag_tmp]
+    mov rsi, [rsp + 40]
+    call sb_push_u64
+    mov rdi, r12
+    xor esi, esi
+    call ag_reply
+    EPILOGUE
+7:  mov [rsp + 40], rax
+    mov edi, r13d
+    SYS SYS_close
+    mov rax, [rsp + 40]
+8:  mov rdi, r12
+    mov rsi, rax
+    call ag_error
+    EPILOGUE
+
 # connect CH PORT 0: a TCP connection to the host's PORT on 127.0.0.1, else on ::1, on channel CH
 #   (a forwarded port: remotefwd.s); its bytes flow as a program's
 ag_connect:
@@ -3789,6 +3840,7 @@ ag_verbs:
     .quad .Lv_watch, ag_watch, .Lv_unwatch, ag_unwatch
     .quad .Lv_access, ag_access, .Lv_files, ag_files, .Lv_grep, ag_grep
     .quad .Lv_stats, ag_stats, .Lv_attach, ag_attach, .Lv_connect, ag_connect
+    .quad .Lv_freeport, ag_freeport     # [debugger group]
     .quad 0, 0
 .Linfo_keys:
     .quad .Lk_home_env, .Lk_home, .Lk_shell_env, .Lk_shell, .Lk_user_env, .Lk_user, 0, 0
@@ -3817,6 +3869,7 @@ ag_verbs:
 .Lv_stats: .asciz "stats"
 .Lv_attach: .asciz "attach"
 .Lv_connect: .asciz "connect"
+.Lv_freeport: .asciz "freeport"
 .Lopt_session: .asciz "--session"
 .Lsession_dir: .asciz "/.cache/rhun-remote/s"
 .Lk_home_env: .asciz "HOME"

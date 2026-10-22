@@ -1,6 +1,6 @@
 # debugger commands for the headless driver (--script, --control): control.s hands over the commands
 # it does not know. debug-start NAME | debug-run NAME | debug-stop | debug-pause | debug-continue |
-# debug-step over|into|out | debug-frame N | debug-thread ID | debug-session ID | debug-set PATH VALUE | debug-expand PATH | debug-collapse PATH | debug-watch add|remove EXPR |
+# debug-step over|into|out | debug-frame N | debug-thread ID | debug-session ID | debug-connect-answer ID 0|1 | debug-set PATH VALUE | debug-expand PATH | debug-collapse PATH | debug-watch add|remove EXPR |
 # debug-eval EXPR | debug-forget | bp PATH LINE [cond=C] [hits=H] [log=L] | bp-toggle PATH LINE |
 # bp-enable PATH LINE 0|1 | bp-function NAME [cond=C] | bp-clear | exc-filter TYPE FILTER 0|1 |
 # wait-debug STATE [MS] | wait-console TEXT | print-debug | print-stack | print-vars | print-watch |
@@ -206,6 +206,53 @@ c_session:
 1:  xor eax, eax
     pop rbx
     pop rbx
+    ret
+
+# debug-connect-answer ID 0|1: once the focused session (a remote window) has a connection attempt
+#   the host has not answered yet (5 s at most), an answer to it (0 connected, 1 refused) as if it
+#   belonged to session ID (tests: a late answer about a session that ended, its slot made anew)
+c_conn_answer:
+    sub rsp, 8
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test edx, edx
+    jz 1f
+    mov r13d, eax
+    call next_arg
+    mov rdi, rax
+    mov rsi, rdx
+    call parse_u64
+    test edx, edx
+    jz 1f
+    mov r14d, eax
+    mov ebx, 250
+2:  call dap_focused
+    test rax, rax
+    jz 1f
+    mov r15, rax
+    cmp dword ptr [r15 + DS_rconn], 1
+    je 3f
+    dec ebx
+    jz 1f
+    call frame
+    jmp 2b
+3:  mov rax, r15
+    mov rdi, rax
+    call dap_slot_index
+    mov edx, [r15 + DS_rtry]
+    and edx, 0xffffff
+    shl rdx, 8
+    or rax, rdx
+    mov edx, r13d
+    shl rdx, 32
+    or rax, rdx
+    mov rdi, rax
+    mov esi, r14d
+    call dap_rconn_answer
+1:  xor eax, eax
+    add rsp, 8
     ret
 
 # debug-step over|into|out
@@ -759,6 +806,7 @@ DCTL c_continue
 DCTL c_frame
 DCTL c_thread
 DCTL c_session
+DCTL c_conn_answer
 DCTL c_set
 DCTL c_print_changed
 DCTL c_step
@@ -805,6 +853,7 @@ DCTL c_print_debug_hover
 .Lc_debug_frame: .asciz "debug-frame"
 .Lc_debug_thread: .asciz "debug-thread"
 .Lc_debug_session: .asciz "debug-session"
+.Lc_debug_conn_answer: .asciz "debug-connect-answer"
 .Lc_debug_set: .asciz "debug-set"
 .Lc_print_vars_changed: .asciz "print-vars-changed"
 .Lc_debug_step: .asciz "debug-step"
@@ -849,6 +898,7 @@ debug_ctl:
     .quad .Lc_debug_eval, e_c_eval, .Lc_debug_forget, e_c_forget, .Lc_debug_frame, e_c_frame
     .quad .Lc_debug_set, e_c_set, .Lc_print_vars_changed, e_c_print_changed
     .quad .Lc_debug_thread, e_c_thread, .Lc_debug_session, e_c_session
+    .quad .Lc_debug_conn_answer, e_c_conn_answer
     .quad .Lc_bp, e_c_bp, .Lc_bp_toggle, e_c_bp_toggle, .Lc_bp_enable, e_c_bp_enable
     .quad .Lc_bp_function, e_c_bp_function, .Lc_bp_clear, e_c_bp_clear, .Lc_exc_filter, e_c_exc
     .quad .Lc_wait_debug, e_c_wait_debug, .Lc_wait_console, e_c_wait_console

@@ -277,10 +277,29 @@ sa_make:
     ret
 
 # dap_pick_port() -> eax a free loopback port, or -errno: bound to 127.0.0.1:0, read back, closed
-#   (the adapter binds it next)
+#   (the adapter binds it next). In a remote window the adapter listens on the host: the host's
+#   agent picks one there (an agent without freeport: one free here)
 FN dap_pick_port
     PROLOGUE 48
-    mov edi, DSK_AF_INET
+    cmp dword ptr [rip + g_remote], 0
+    je 1f
+    lea rdi, [rip + .Lv_freeport]
+    mov esi, .Lv_freeport_end - .Lv_freeport
+    xor edx, edx
+    xor ecx, ecx
+    call remote_call
+    test rax, rax
+    jnz 1f
+    mov rdi, [rip + g_remote_reply + SB_ptr]
+    mov rsi, [rip + g_remote_reply + SB_len]
+    call parse_u64
+    test edx, edx
+    jz 1f
+    test eax, eax
+    jz 1f
+    cmp eax, 65535
+    jbe 9f
+1:  mov edi, DSK_AF_INET
     mov esi, SOCK_STREAM | SOCK_CLOEXEC
     xor edx, edx
     SYS SYS_socket
@@ -463,8 +482,12 @@ FN dap_connect_try
     mov dword ptr [rbx + DS_rconn], 1
     mov rdi, rbx
     call dap_slot_index
-    mov ecx, [rbx + DS_rtry]
+    mov ecx, [rbx + DS_rtry]    # slot | attempt << 8 | session id << 32
+    and ecx, 0xffffff
     shl rcx, 8
+    or rcx, rax
+    mov eax, [rbx + DS_id]
+    shl rax, 32
     or rcx, rax
     mov edi, [rsp + 4]
     mov esi, [rbx + DS_port]
@@ -478,8 +501,9 @@ FN dap_connect_try
     mov dword ptr [rbx + DS_rconn], 0
     jmp 5b
 
-# rconn_done(slot | attempt << 8, 0 connected | 1 refused): the host's answer to a connection; the
-#   next tick goes on (connect_tick)
+# rconn_done(slot | attempt << 8 | session id << 32, 0 connected | 1 refused): the host's answer to a
+#   connection; the next tick goes on (connect_tick). A slot made anew meanwhile has another id
+FN dap_rconn_answer             # (tests: debug-connect-answer)
 rconn_done:
     PROLOGUE
     mov r12, rdi
@@ -489,8 +513,15 @@ rconn_done:
     jae 9f
     call dap_slot
     mov rbx, rax
+    mov rax, r12
+    shr rax, 32
+    cmp eax, [rbx + DS_id]
+    jne 9f
     shr r12, 8
-    cmp r12d, [rbx + DS_rtry]
+    and r12d, 0xffffff
+    mov eax, [rbx + DS_rtry]
+    and eax, 0xffffff
+    cmp r12d, eax
     jne 9f
     cmp dword ptr [rbx + DS_rconn], 1
     jne 9f
@@ -1020,6 +1051,8 @@ FN dap_log_dump
 env_extra: .zero 16
 
 .section .rodata
+.Lv_freeport: .ascii "freeport 0"
+.Lv_freeport_end:
 .Lenv_session: .asciz "RHUN_DEBUG_SESSION="
 .Lcl: .asciz "Content-Length: "
 .Lcl_name: .ascii "content-length:"

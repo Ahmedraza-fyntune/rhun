@@ -1411,7 +1411,7 @@ filters (such as Python's "Uncaught Exceptions").
 | debugpy (Python) | tested (uncaught exceptions, input in the terminal) | not tested | not tested |
 
 In a remote window the adapter runs on the host and launch.ini is the host's file. A debugger
-reached over TCP (`transport = tcp`, as Delve is) listens on the host's loopback, and the host makes
+reached over TCP (`transport = tcp`, as Delve is) listens on a port free on the host's loopback, and the host makes
 the connection there, again until the adapter listens (10 s at most); `server = PORT` (or
 `localhost:PORT`) also means a port on the host. An adapter its extension ships is copied to the
 host with the extension's folder before it starts.
