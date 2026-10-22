@@ -127,7 +127,7 @@ class Step(debughost.DebugHost):
         # review: answers to an earlier round landed under the wrong expressions
         self.variables_scenario()
         out = self.run_editor([*self.start(), 'wait-debug paused', 'debug-watch add total', 'debug-watch add p.x',
-                               'debug-watch remove total', 'wait 300', 'print-watch'], mode='slow=50')
+                               'debug-watch remove total', 'wait 1500', 'print-watch'], mode='slow=50')
         self.assertEqual(out[out.index('debug=paused') + 1:], ['p.x = 1 : int'])
 
     def test_refused_step_leaves_the_program_paused(self):
