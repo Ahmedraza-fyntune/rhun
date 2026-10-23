@@ -307,6 +307,12 @@ ENDSTRUCT RECT_SIZE
 .equ KEY_KP_ENTER, 0xff8d
 .equ KEY_F1, 0xffbe
 .equ KEY_SHIFT_L, 0xffe1
+.equ KEY_SHIFT_R, 0xffe2
+.equ KEY_CTRL_L, 0xffe3
+.equ KEY_CTRL_R, 0xffe4
+.equ KEY_ALT_L, 0xffe9
+.equ KEY_ALT_R, 0xffea
+.equ KEY_SUPER_L, 0xffeb
 .equ KEY_SUPER_R, 0xffec
 .equ KEY_ISO_LEFT_TAB, 0xfe20
 .equ KEY_DELETE, 0xffff
@@ -1716,6 +1722,7 @@ ENDSTRUCT TF_SIZE
     FEATURE FEAT_QUICK_INPUT, "quick-input", 0    # views group: quick, quick-set, quick-close (quick.s)
     FEATURE FEAT_VIEW_DOC, "view-doc", 0          # views group: doc views (rdoc.s, markdown.s)
     FEATURE FEAT_MARKDOWN, "markdown", 0          # views group: Markdown in node tooltips and notification messages
+    FEATURE FEAT_VIEW_KEY_STATE, "view-key-state", 0 # paired key releases and window focus
 .endm
 # extproto.s sets FEATURE_NAMES and expands the list again as its name table
 .macro FEATURE sym, name, asks
@@ -2486,6 +2493,7 @@ ENDSTRUCT XK_SIZE
 .equ NEEDS_NETWORK, 32
 .equ NEEDS_TERMINAL, 64
 .equ NEEDS_GIT_READ, 128        # [needs] git = read: the project's Git data through rhun (gitdata.s)
+.equ NEEDS_AUDIO, 0x2000000      # local audio devices and services
 .equ NEEDS_SECRETS, 0x1000000      # resources group: [needs] secrets = yes
 
 .equ EXT_MAX_RUNNING, EXT_CAP

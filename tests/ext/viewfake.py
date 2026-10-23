@@ -548,6 +548,8 @@ def main():
         features += ' notify progress'
     if PIC:
         features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
+    if os.environ.get('VIEWFAKE_KEY_STATE'):
+        features += ' view-key-state'
     if os.environ.get('VIEWFAKE_FORM'):
         features += ' view-form'
     if os.environ.get('VIEWFAKE_TABLE'):

@@ -2302,6 +2302,8 @@ FN wheel_xy
 FN app_on_focus
     mov [rip + g_win_focused], edi
     push rdi
+    call viewpic_window_focus
+    mov edi, [rsp]
     call keys_chord_cancel
     # files may have changed while away
     test edi, edi

@@ -48,6 +48,38 @@ class Pictures(ViewsBase):
         self.assertIn(f'0 view {PIC} key - Insert', log)    # F-keys have bindings
         self.assertIn(f'0 view {PIC} selectall', log)
 
+    def test_paired_releases_and_window_focus_are_opt_in(self):
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'focus out', 'focus in', 'wait 100'])
+        log = self.fake_log()
+        self.assertIn(f'0 view {PIC} key - w', log)
+        self.assertIn(f'0 view {PIC} key-up - w', log)
+        self.assertIn(f'0 view {PIC} focus 0', log)
+        self.assertIn(f'0 view {PIC} focus 1', log)
+
+    def test_legacy_picture_does_not_receive_key_releases(self):
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'wait 100'])
+        self.assertFalse(any(' key-up ' in line for line in self.fake_log()))
+
+    def test_key_state_requires_view_keys(self):
+        self.env['VIEWFAKE_PIC'] = 'nokeys'
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key w', 'key-up w', 'wait 100'])
+        self.assertFalse(any(' key ' in line or ' key-up ' in line for line in self.fake_log()))
+
+    def test_releases_use_the_unshifted_key_name(self):
+        self.env['VIEWFAKE_KEY_STATE'] = '1'
+        x, y = self.shown()
+        self.run_editor(['view-show pic', 'wait 300', f'click {x + 50} {y + 30}',
+                         'key shift+1', 'key-up shift+1', 'wait 100'])
+        self.assertIn(f'0 view {PIC} key-up shift 1', self.fake_log())
+
     def test_copy_asks_the_picture_and_paste_brings_text_to_it(self):
         (self.proj / 'note.txt').write_text('pasted words', encoding='utf-8')
         x, y = self.shown()
@@ -71,7 +103,7 @@ class Pictures(ViewsBase):
     def test_an_image_by_handle_is_drawn_and_goes(self):
         x, y = self.shown()
         shot = self.work / 'shot.ppm'
-        out = self.run_editor(['view-show pic', 'wait 300', 'cmd viewfake.img', 'wait 400', f'shot {shot}',
+        out = self.run_editor(['view-show pic', 'wait 300', 'cmd viewfake.img', 'wait 400', f'shot {shot.as_posix()}',
                                'cmd viewfake.unimg', 'wait 300'])
         data = shot.read_bytes()
         # P6 header: "P6\nW H\n255\n"

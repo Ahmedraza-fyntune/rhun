@@ -438,6 +438,10 @@ FN win_deferred_push
     cmp esi, 0x20e
     je .Ldefer_yes
 .Ldefer_keys:
+    cmp esi, 0x101
+    je .Ldefer_yes
+    cmp esi, 0x105
+    je .Ldefer_yes
     cmp esi, 0x100
     je .Ldefer_yes
     cmp esi, 0x102
@@ -569,6 +573,10 @@ win_wndproc_deferred:
     cmp edx, 0x20e
     je .Lwm_scroll
 .Lwm_key:
+    cmp r12d, 0x101
+    je .Lwm_keyup
+    cmp r12d, 0x105
+    je .Lwm_keyup
     cmp r12d, 0x102
     je .Lwm_char
     cmp r12d, 0x106
@@ -780,7 +788,9 @@ win_wndproc_deferred:
     call win_mods
 8:
     mov r15d, eax
-    test eax, MOD_ALT
+    mov edi, eax
+    call viewpic_modifiers
+    test r15d, MOD_ALT
     jz 9f
     cmp r13d, 115              # Alt+F4 belongs to Windows
     je .Lwm_default
@@ -826,6 +836,35 @@ win_wndproc_deferred:
     xor esi, esi
     mov edx, r15d
     call app_on_key
+    jmp .Lwm_zero
+.Lwm_keyup:
+    mov eax, [rsp + 176]
+    test eax, eax
+    jns 8f
+    call win_mods
+8:  mov r15d, eax
+    mov edi, eax
+    call viewpic_modifiers
+    lea rdx, [rip + .Lkeys]
+    xor ecx, ecx
+1:  mov eax, [rdx + rcx*8]
+    test eax, eax
+    jz 2f
+    cmp eax, r13d
+    je 4f
+    inc ecx
+    jmp 1b
+2:  mov ecx, r13d
+    mov edx, 2
+    API MapVirtualKeyW
+    and eax, 0x7fffffff
+    test eax, eax
+    jz .Lwm_zero
+    mov edi, eax
+    jmp 3f
+4:  mov edi, [rdx + rcx*8 + 4]
+3:  mov esi, r15d
+    call viewpic_key_up
 .Lwm_zero:
     mov dword ptr [rip + g_key_latin], 0
     xor eax, eax
