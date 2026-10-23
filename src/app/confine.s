@@ -423,7 +423,13 @@ rules_build:
     rep movsb
     mov byte ptr [rdi], 0
     pop rdi
-    call proc_which
+    push rdi
+    push rdi
+    call uproc_login_path       # found where the extension finds it (its PATH, build_env)
+    pop rdi
+    pop rdi
+    mov rsi, rax
+    call proc_which_in
     test rax, rax
     jz 7b                       # not installed: the program will say so itself
     mov r14, rax
@@ -788,7 +794,13 @@ profile_build:
     rep movsb
     mov byte ptr [rdi], 0
     pop rdi
-    call proc_which
+    push rdi
+    push rdi
+    call uproc_login_path       # found where the extension finds it (its PATH, build_env)
+    pop rdi
+    pop rdi
+    mov rsi, rax
+    call proc_which_in
     test rax, rax
     jz 7b
     mov r14, rax
