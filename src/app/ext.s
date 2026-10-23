@@ -3539,8 +3539,7 @@ build_env:
     mov [rax], rcx
 3:  add r12, 8
     jmp 2b
-1:  lea rdi, [rip + .Le_path]
-    call getenv
+1:  call uproc_login_path       # the user's login PATH, as terminals and debug adapters get it
     test rax, rax
     jz 4f
     lea rdi, [rip + .Le_path_eq]

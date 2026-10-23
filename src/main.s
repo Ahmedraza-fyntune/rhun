@@ -114,6 +114,9 @@ FN main
 2:  call app_init
     cmp dword ptr [rip + opt_headless], 0
     jne .Lm_headless
+    # a window not started from a terminal: the login shell tells its environment (uproc.s) while
+    # the window opens, before the first extension, terminal or debug adapter waits for it
+    call uproc_env_start
 .ifdef WINDOWS
     lea rdi, [rip + .Ltitle]
     call win_open_window
