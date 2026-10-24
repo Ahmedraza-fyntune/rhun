@@ -423,6 +423,9 @@ def on_command(name):
                lambda img: patch(views['readme'], [rec('doc', '', f'# Pic\n\n![green](img:{img})\n'.encode())]))
     elif name == 'docbad' and views.get('readme'):
         patch(views['readme'], [rec('base', '', b'relative/folder')])
+    elif name == 'doccopy' and views.get('readme'):
+        code = '# install tools\nprintf "café"\n\techo done\n'
+        patch(views['readme'], [rec('doc', '', ('# Commands\n\n```sh\n' + code + '```\n\n```\necho second\n```\n').encode())])
     elif name == 'docbig' and views.get('readme'):
         patch(views['readme'], [rec('doc', '', b'x' * 1048577)])
     elif name == 'doctree' and views.get('readme'):
@@ -548,6 +551,8 @@ def main():
         features += ' notify progress'
     if PIC:
         features += ' views view-images' + ('' if PIC == 'nokeys' else ' view-keys')
+    if os.environ.get('VIEWFAKE_KEY_STATE'):
+        features += ' view-key-state'
     if os.environ.get('VIEWFAKE_FORM'):
         features += ' view-form'
     if os.environ.get('VIEWFAKE_TABLE'):

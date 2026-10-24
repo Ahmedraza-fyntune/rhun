@@ -53,11 +53,74 @@ conf_prime_xdb: .zero 4200      # "xcrun_db=" and the primer's own cache, beside
 conf_prime_dst: .zero 4200      # the extension's cache, where the primer's goes when it is done
 conf_primed: .zero 64 * 8       # the caches a primer was started for in this session (copies)
 interpbuf: .zero 4200           # a #! interpreter's real path (profile_program)
+parentbuf: .zero 4200
+rustupbuf: .zero 4200
 treebuf: .zero 4200             # and its install tree
 elfhdr: .zero 256               # an ELF header, or a #! line (macOS reads 512 bytes of it, Linux 256)
 phdr: .zero 56
 
 .text
+
+# rustup keeps toolchains outside HOME. The extension's HOME remains private; only a declared
+# rustup proxy receives access to this installation, never the user's Cargo credentials.
+FN confine_rustup_home
+    PROLOGUE
+    lea rdi, [rip + .Lenv_rustup]
+    call getenv
+    test rax, rax
+    jz 1f
+    cmp byte ptr [rax], '/'
+    je 2f
+1:  lea rdi, [rip + .Lenv_home]
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    lea rsi, [rip + .Lrustup_dir]
+    call path_join_tmp
+2:  mov rbx, rax
+    mov rdi, rax
+    call strlen
+    cmp rax, 4096
+    jae 9f
+    lea rdi, [rip + rustupbuf]
+    mov rsi, rbx
+    lea rdx, [rax + 1]
+    call memcpy
+    lea rax, [rip + rustupbuf]
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# @build explicitly permits generated programs in the extension's state and writable projects.
+# Compilers use these for Swift manifests, Cargo build scripts and Zig build runners.
+confine_builds:
+    PROLOGUE
+    mov rbx, [rdi + EXT_runs]
+    test rbx, rbx
+    jz 8f
+    mov rdi, rbx
+    call strlen
+    mov r12, rax
+1:  test r12, r12
+    jz 8f
+    mov rdi, rbx
+    mov rsi, r12
+    call next_word
+    add rbx, rcx
+    sub r12, rcx
+    cmp rdx, 6
+    jne 1b
+    mov rdi, rax
+    mov esi, 6
+    lea rdx, [rip + .Lbuild_token]
+    call str_eq_cstr
+    test eax, eax
+    jz 1b
+    mov eax, 1
+    EPILOGUE
+8:  xor eax, eax
+    EPILOGUE
 
 # ---------------- the probe ----------------
 
@@ -301,6 +364,25 @@ rules_release:
 
 .ifndef MACOS
 # rules_build() -> 0, or a reason cstr: the Landlock rules for rbx (the EXT)
+# audio_rule(environment name, relative path, rights): only the named audio resource.
+audio_rule:
+    PROLOGUE
+    mov r12, rsi
+    mov r13, rdx
+    call getenv
+    test rax, rax
+    jz 9f
+    mov rdi, rax
+    mov rsi, r12
+    call path_join
+    mov r12, rax
+    mov rdi, rax
+    mov rsi, r13
+    call add_rule
+    mov rdi, r12
+    call mem_free
+9:  EPILOGUE
+
 rules_build:
     PROLOGUE
     # the system, read-only, where present
@@ -315,6 +397,20 @@ rules_build:
 2:  lea rdi, [rip + .Lp_devnull]
     mov rsi, LL_READ_FILE | LL_WRITE_FILE
     call add_rule
+    test dword ptr [rbx + EXT_needs], NEEDS_AUDIO
+    jz 21f
+    lea rdi, [rip + .Lp_sound]
+    mov rsi, LL_RO | LL_WRITE_FILE | LL_IOCTL_DEV
+    call add_rule
+    lea rdi, [rip + .Lenv_runtime]
+    lea rsi, [rip + .La_pulse]
+    mov rdx, LL_RO | LL_WRITE_FILE
+    call audio_rule
+    lea rdi, [rip + .Lenv_home]
+    lea rsi, [rip + .La_cookie]
+    mov rdx, LL_READ_FILE
+    call audio_rule
+21:
     # the extension folder, its script, its state folder
     mov rdi, [rbx + EXT_dir]
     mov rsi, LL_RO
@@ -324,8 +420,13 @@ rules_build:
     jz 3f
     mov rsi, LL_READ_FILE
     call add_rule
-3:  mov rdi, [rbx + EXT_state]
-    mov rsi, LL_RW
+3:  mov rdi, rbx
+    call confine_builds
+    mov esi, LL_RW
+    test eax, eax
+    jz 301f
+    or rsi, LL_EXECUTE
+301: mov rdi, [rbx + EXT_state]
     call add_rule
     test rax, rax
     jnz 31f
@@ -347,7 +448,16 @@ rules_build:
     mov rsi, LL_RO
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_WRITE
     jz 32f
-    mov rsi, LL_RW
+    push rdi
+    push rdi
+    mov rdi, rbx
+    call confine_builds
+    mov esi, LL_RW
+    test eax, eax
+    jz 321f
+    or rsi, LL_EXECUTE
+321:pop rdi
+    pop rdi
 32: call add_rule
     jmp 33b
 4:  # the user's home
@@ -390,7 +500,13 @@ rules_build:
     rep movsb
     mov byte ptr [rdi], 0
     pop rdi
-    call proc_which
+    push rdi
+    push rdi
+    call uproc_login_path       # found where the extension finds it (its PATH, build_env)
+    pop rdi
+    pop rdi
+    mov rsi, rax
+    call proc_which_in
     test rax, rax
     jz 7b                       # not installed: the program will say so itself
     mov r14, rax
@@ -444,7 +560,37 @@ add_program:
     lea rdi, [rip + pathbuf]
     mov rsi, LL_RO | LL_EXECUTE
     call add_rule
-3:  xor eax, eax
+3:  mov rdi, rbx
+    lea rsi, [rip + pathbuf2]
+    SYS SYS_realpath
+    test rax, rax
+    jz 39f
+    lea rdi, [rip + pathbuf2]
+    call strlen
+    mov rsi, rax
+    lea rdi, [rip + pathbuf2]
+    lea rdx, [rip + .Lrustup_exe]
+    mov ecx, 7
+    call str_ends
+    test eax, eax
+    jz 39f
+    call confine_rustup_home
+    test rax, rax
+    jz 39f
+    mov rdi, rax
+    lea rsi, [rip + .Lrustup_tools]
+    call path_join_tmp
+    mov rdi, rax
+    mov esi, LL_RO | LL_EXECUTE
+    call add_rule
+    call confine_rustup_home
+    mov rdi, rax
+    lea rsi, [rip + .Lrustup_settings]
+    call path_join_tmp
+    mov rdi, rax
+    mov esi, LL_READ_FILE
+    call add_rule
+39: xor eax, eax
     EPILOGUE
 
 # add_rule(path cstr, rights) -> 1 when a rule was added, 0 when the path does not exist (a
@@ -670,6 +816,15 @@ profile_build:
     lea rdi, [rip + conf_profile]
     lea rsi, [rip + .Lsb_head]
     call sb_push_cstr
+    lea rdi, [rip + conf_profile]
+    lea rsi, [rip + .Lsb_dns]
+    call sb_push_cstr
+    test dword ptr [rbx + EXT_needs], NEEDS_AUDIO
+    jz 90f
+    lea rdi, [rip + conf_profile]
+    lea rsi, [rip + .Lsb_audio]
+    call sb_push_cstr
+90:
     # the extension folder, its script and its state folder
     mov rdi, [rbx + EXT_dir]
     lea rsi, [rip + .Lsb_ro]
@@ -682,6 +837,32 @@ profile_build:
 1:  mov rdi, [rbx + EXT_state]
     lea rsi, [rip + .Lsb_rw]
     call profile_path
+    mov rdi, rbx
+    call confine_builds
+    test eax, eax
+    jz 11f
+    mov rdi, [rbx + EXT_state]
+    lea rsi, [rip + .Lsb_exec_sub]
+    call profile_path
+    # Build runners watch source files through the macOS filesystem event service.
+    lea rdi, [rip + conf_profile]
+    lea rsi, [rip + .Lsb_build_watch]
+    call sb_push_cstr
+    # Foundation's atomic file replacement uses this OS-managed directory even
+    # when TMPDIR points into state. macOS still isolates each process's items.
+    lea rdi, [rip + .Lenv_tmpdir]
+    call getenv
+    test rax, rax
+    jz 11f
+    cmp byte ptr [rax], '/'
+    jne 11f
+    mov rdi, rax
+    lea rsi, [rip + .Ltemporary_items]
+    call path_join_tmp
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_rw]
+    call profile_path
+11:
     # the project (every workspace folder: resources group, workspace.s) and the home
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
     jz 2f
@@ -695,11 +876,27 @@ profile_build:
     mov rdi, rax
     test rdi, rdi
     jz 22b
+    push rdi
+    push rdi
+    call profile_parents
+    pop rdi
+    pop rdi
     lea rsi, [rip + .Lsb_ro]
     test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_WRITE
     jz 21f
     lea rsi, [rip + .Lsb_rw]
 21: call profile_path
+    test dword ptr [rbx + EXT_needs], NEEDS_PROJECT_WRITE
+    jz 22b
+    mov rdi, rbx
+    call confine_builds
+    test eax, eax
+    jz 22b
+    lea rdi, [r12 - 1]
+    call wfold_path
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_exec_sub]
+    call profile_path
     jmp 22b
 2:  test dword ptr [rbx + EXT_needs], NEEDS_HOME_READ
     jz 3f
@@ -749,7 +946,13 @@ profile_build:
     rep movsb
     mov byte ptr [rdi], 0
     pop rdi
-    call proc_which
+    push rdi
+    push rdi
+    call uproc_login_path       # found where the extension finds it (its PATH, build_env)
+    pop rdi
+    pop rdi
+    mov rsi, rax
+    call proc_which_in
     test rax, rax
     jz 7b
     mov r14, rax
@@ -771,6 +974,32 @@ profile_build:
     call sb_push_byte           # the profile is a cstr
     xor eax, eax
     EPILOGUE
+
+# A tool searching for its project root may list ancestor directories. Literal directory
+# rules expose names only; sibling files and parent configuration contents remain unreadable.
+profile_parents:
+    PROLOGUE
+    lea rsi, [rip + parentbuf]
+    SYS SYS_realpath
+    test rax, rax
+    jz 9f
+    lea rdi, [rip + parentbuf]
+    call strlen
+    mov rbx, rax
+1:  test rbx, rbx
+    jz 9f
+    dec rbx
+    lea rax, [rip + parentbuf]
+    cmp byte ptr [rax + rbx], '/'
+    jne 1b
+    test rbx, rbx
+    jz 9f
+    mov byte ptr [rax + rbx], 0
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_ro_lit]
+    call profile_path
+    jmp 1b
+9:  EPILOGUE
 
 # profile_path(path cstr, form cstr with %s): one allow line with the real path
 profile_path:
@@ -899,6 +1128,31 @@ profile_program:
     lea rsi, [rip + .Lsb_exec_sub]
     call profile_path
 8:  mov rdi, r12
+    call strlen
+    mov rsi, rax
+    mov rdi, r12
+    lea rdx, [rip + .Lrustup_exe]
+    mov ecx, 7
+    call str_ends
+    test eax, eax
+    jz 81f
+    call confine_rustup_home
+    test rax, rax
+    jz 81f
+    mov rdi, rax
+    lea rsi, [rip + .Lrustup_tools]
+    call path_join_tmp
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_exec_sub]
+    call profile_path
+    call confine_rustup_home
+    mov rdi, rax
+    lea rsi, [rip + .Lrustup_settings]
+    call path_join_tmp
+    mov rdi, rax
+    lea rsi, [rip + .Lsb_ro_lit]
+    call profile_path
+81: mov rdi, r12
     call xcode_shim
 9:  EPILOGUE
 
@@ -1016,7 +1270,17 @@ xcode_shim:
 32: mov rdi, r13
     lea rsi, [rip + .Lsb_exec_lit]
     call profile_path
-    lea rdi, [rip + devbuf]
+    # The real tool's packaged helpers as for any other declared program (git's
+    # libexec/git-core, Swift's compiler drivers and SourceKit's service).
+    mov rdi, r13
+    lea rsi, [rip + treebuf]
+    call install_tree
+    test eax, eax
+    jz 321f
+    lea rdi, [rip + treebuf]
+    lea rsi, [rip + .Lsb_exec_sub]
+    call profile_path
+321: lea rdi, [rip + devbuf]
     lea rsi, [rip + .Lxcodebuild]
     call path_join
     mov r15, rax
@@ -1520,7 +1784,11 @@ FN confine_exit_reason
 .section .rodata
 .p2align 3
 sys_dirs: .quad .Lp_usr, .Lp_lib, .Lp_lib64, .Lp_bin, .Lp_sbin, .Lp_etc, .Lp_proc, .Lp_sys, .Lp_dev, .Lp_opt, .Lp_nix, .Lp_snap, 0
-tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
+tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, .Lt_flutter, 0
+.Lenv_tmpdir: .asciz "TMPDIR"
+.Ltemporary_items: .asciz "/TemporaryItems"
+.Lbuild_token: .asciz "@build"
+.Lt_flutter: .asciz "bin/cache/dart-sdk"
 .Lp_usr: .asciz "/usr"
 .Lp_lib: .asciz "/lib"
 .Lp_lib64: .asciz "/lib64"
@@ -1534,6 +1802,10 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lp_nix: .asciz "/nix"
 .Lp_snap: .asciz "/snap"
 .Lp_devnull: .asciz "/dev/null"
+.Lp_sound: .asciz "/dev/snd"
+.Lenv_runtime: .asciz "XDG_RUNTIME_DIR"
+.La_pulse: .asciz "pulse"
+.La_cookie: .asciz ".config/pulse/cookie"
 .Lt_lib: .asciz "lib"
 .Lt_libexec: .asciz "libexec"
 .Lt_pkg: .asciz "pkg"
@@ -1542,6 +1814,11 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lp_uidmap: .asciz "/proc/self/uid_map"
 .Lp_gidmap: .asciz "/proc/self/gid_map"
 .Ls_deny: .asciz "deny"
+.Lenv_rustup: .asciz "RUSTUP_HOME"
+.Lrustup_dir: .asciz ".rustup"
+.Lrustup_exe: .asciz "/rustup"
+.Lrustup_tools: .asciz "toolchains"
+.Lrustup_settings: .asciz "settings.toml"
 .Lenv_home: .asciz "HOME"
 .Lenv_conflog: .asciz "RHUN_CONFINE_LOG"
 .Llog_rule: .asciz "confine: rule "
@@ -1564,11 +1841,14 @@ tree_marks: .quad .Lt_lib, .Lt_libexec, .Lt_pkg, .Lt_frameworks, 0
 .Lstep_ruleset: .asciz "landlock_create_ruleset"
 .Lstep_rule: .asciz "landlock_add_rule"
 .Lstep_restrict: .asciz "landlock_restrict_self"
-.Lsb_head: .ascii "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow process-fork)\n(allow file-read-metadata)\n(allow sysctl-read)\n"
+.Lsb_head: .ascii "(version 1)\n(deny default)\n(import \"system.sb\")\n(allow process-fork)\n(allow signal (target same-sandbox))\n(allow file-read-metadata)\n(allow sysctl-read)\n"
     .ascii "(allow mach-lookup (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\"))\n"
     .ascii "(allow file-read* (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\") (subpath \"/private/etc\") (subpath \"/dev\") (literal \"/\") (subpath \"/opt\") (subpath \"/nix\"))\n"
     .ascii "(allow file-write* (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\"))\n"
     .asciz "(allow file-read* (literal \"/dev/null\") (literal \"/dev/urandom\") (literal \"/dev/random\") (literal \"/dev/tty\"))\n"
+.Lsb_dns: .asciz "(allow file-read* (literal \"/private/var/run/resolv.conf\"))\n"
+.Lsb_build_watch: .asciz "(allow mach-lookup (global-name \"com.apple.FSEvents\"))\n"
+.Lsb_audio: .asciz "(allow mach-lookup (global-name \"com.apple.audio.AudioComponentPrefs\") (global-name \"com.apple.audio.AudioComponentRegistrar\") (global-name \"com.apple.audio.AudioSession\") (global-name \"com.apple.audio.audiohald\") (global-name \"com.apple.audio.coreaudiod\") (global-name \"com.apple.mediaexperience.endpoint.xpc\"))\n(allow ipc-posix-shm-read* ipc-posix-shm-write-data (ipc-posix-name-prefix \"AudioIO\"))\n(allow iokit-open-user-client (require-all (iokit-connection \"AppleHDAEngineOutput\") (iokit-user-client-class \"IOAudioControlUserClient\" \"IOAudioEngineUserClient\")))\n"
 .Lsb_ro: .asciz "(allow file-read* (subpath \"%s\"))\n"
 .Lsb_ro_lit: .asciz "(allow file-read* (literal \"%s\"))\n"
 .Lsb_rw: .asciz "(allow file-read* file-write* (subpath \"%s\"))\n"

@@ -1105,6 +1105,7 @@ FN extindex_count
 .Ln_project_read: .asciz "project=read"
 .Ln_project_write: .asciz "project=write"
 .Ln_home_read: .asciz "home=read"
+.Ln_audio: .asciz "audio=yes"
 .Ln_network: .asciz "network=yes"
 .Ln_terminal: .asciz "terminal=yes"
 .Lsh: .asciz "/bin/sh"
@@ -1132,7 +1133,7 @@ xi_search_fields:
 xi_needs_map:
     .quad .Ln_documents_read, NEEDS_DOC_READ, .Ln_documents_write, NEEDS_DOC_READ | NEEDS_DOC_WRITE
     .quad .Ln_project_read, NEEDS_PROJECT_READ, .Ln_project_write, NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE
-    .quad .Ln_home_read, NEEDS_HOME_READ, .Ln_network, NEEDS_NETWORK, .Ln_terminal, NEEDS_TERMINAL, 0, 0
+    .quad .Ln_home_read, NEEDS_HOME_READ, .Ln_network, NEEDS_NETWORK, .Ln_terminal, NEEDS_TERMINAL, .Ln_audio, NEEDS_AUDIO, 0, 0
 # the fetch: fixed text, the base and the cache file as arguments; index.ini from rhun-editor/extensions'
 # latest release, checked against its sha256sums.txt, replaces the cache. The last line is "ok", or why
 index_script:

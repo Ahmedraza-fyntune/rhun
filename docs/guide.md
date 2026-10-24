@@ -877,7 +877,7 @@ commands:
 | ctrl+t | Go to Symbol in Project | symbols of the whole project as you type (also `#` first in Go to File) |
 | shift+alt+Right, shift+alt+Left | Expand/Shrink Selection | each selection grows to the enclosing expression, statement, block…; shrink goes back |
 | F8, shift+F8 | Next/Previous Problem | the next problem in the file, with its message in the hover card |
-| ctrl+click | | on a link (an `#include`, a URL in a comment) opens it; on other text goes to the definition (cmd+click on macOS; alt+click when ctrl adds carets) |
+| ctrl+click | | on a link (an `#include`, a URL in a comment) opens it; on a symbol goes to its definition. Hold ctrl to underline the symbol when a definition is available (cmd on macOS; alt when ctrl adds carets). |
 | ctrl+. | Show Code Actions | quick fixes first, then refactorings and other actions |
 | shift+alt+. | Auto Fix | applies the preferred quick fix at the cursor, else lists the quick fixes |
 | shift+alt+o | Organize Imports | applied at once when the extension offers exactly one |
@@ -1093,6 +1093,24 @@ of them:
   selected, unsaved text, the problems shown, open a file, propose changes for the Review tab,
   and put a command in rhun's terminal prompt (it runs when you press Enter). After installing it,
   **MCP: Add rhun to Claude Code** (or **to Codex**) puts the setup command in rhun's prompt.
+
+### Picture extensions and sound
+
+Extensions can draw interactive pictures in a tab or panel, including games and visual tools.
+Since rhun 0.18.2, picture extensions can receive key releases and focus changes for smooth
+held controls. Input goes to the focused picture, and editor shortcuts keep their bindings.
+
+[DOOM](https://github.com/rhun-editor/doom) runs the original shareware episode in an editor tab,
+with sound effects and music. In **Install from GitHub…**, enter `rhun-editor/doom@0.1.0`,
+approve its audio access, then run **DOOM: Play** from the command palette. The game data is
+included. Click the game to play; W/S move, A/D strafe, arrows turn, Space fires and E opens doors.
+P pauses and M mutes. It pauses automatically when focus leaves the game.
+
+An extension that plays sound declares `audio = yes` in `[needs]`. Installation shows
+"access local audio devices and services", and adding audio permission during an update asks
+again. macOS grants output services. Linux sound devices and services can also expose recording;
+this permission does not promise playback-only confinement. Windows extensions currently run
+without an OS sandbox. DOOM opens playback streams only.
 
 ### Install and manage
 
