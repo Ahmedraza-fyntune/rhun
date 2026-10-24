@@ -2674,7 +2674,15 @@ parse_needs:
     mov edi, NEEDS_SECRETS
     call needs_yes
     jmp 9f
-10: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
+10: mov rdi, r12                # local audio services; platform access is documented in v1.1
+    lea rsi, [rip + .Ln_audio]
+    call ini_key_is
+    test eax, eax
+    jz 11f
+    mov edi, NEEDS_AUDIO
+    call needs_yes
+    jmp 9f
+11: # notebooks: kernels = the programs rhun may start as the user for its notebooks (nbexec.s)
     mov rdi, r12
     lea rsi, [rip + .Ln_kernels]
     call ini_key_is
@@ -3531,8 +3539,7 @@ build_env:
     mov [rax], rcx
 3:  add r12, 8
     jmp 2b
-1:  lea rdi, [rip + .Le_path]
-    call getenv
+1:  call uproc_login_path       # the user's login PATH, as terminals and debug adapters get it
     test rax, rax
     jz 4f
     lea rdi, [rip + .Le_path_eq]
@@ -3540,7 +3547,19 @@ build_env:
     call env_add
     test rax, rax
     js .Lenv_scratch_error
-4:  lea rdi, [rip + .Le_home_eq]
+4:
+.ifndef WINDOWS
+    call confine_rustup_home
+    test rax, rax
+    jz 41f
+    mov rsi, rax
+    lea rdi, [rip + .Le_rustup_eq]
+    call env_add
+    test rax, rax
+    js .Lenv_scratch_error
+41:
+.endif
+    lea rdi, [rip + .Le_home_eq]
     mov rsi, [rbx + EXT_state]
     call env_add
     test rax, rax
@@ -5219,7 +5238,7 @@ sub_keys: .quad .Lsk_opened, EXT_sub_opened, .Lsk_saved, EXT_sub_saved, .Lsk_cha
     .quad .Lsk_cursor, EXT_sub_cursor, .Lsk_selection, EXT_sub_selection
     .quad .Lsk_edits, EXT_sub_edits, .Lsk_hover, EXT_sub_hover
     .quad 0, 0
-env_names: .quad .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
+env_names: .quad .Le_rustup, .Le_path, .Le_home, .Le_tmpdir, .Le_cache, .Le_gocache, .Le_gomod, .Le_gopath, .Le_npm
 .ifdef MACOS
     .quad .Le_xcrun_db, .Le_devdir
 .endif
@@ -5360,6 +5379,7 @@ ext_target: .asciz "linux-x86_64"
 .Ln_network: .asciz "network"
 .Ln_terminal: .asciz "terminal"
 .Ln_run: .asciz "run"
+.Ln_audio: .asciz "audio"
 .Ln_secrets: .asciz "secrets"
 .Ln_git: .asciz "git"
 .Ln_kernels: .asciz "kernels"           # notebooks
@@ -5383,6 +5403,8 @@ ext_target: .asciz "linux-x86_64"
 .Lo_open: .asciz "open:"
 .Le_path: .asciz "PATH"
 .Le_path_eq: .asciz "PATH="
+.Le_rustup: .asciz "RUSTUP_HOME"
+.Le_rustup_eq: .asciz "RUSTUP_HOME="
 .Le_home: .asciz "HOME"
 .Le_home_eq: .asciz "HOME="
 .Le_tmpdir: .asciz "TMPDIR"

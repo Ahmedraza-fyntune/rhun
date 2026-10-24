@@ -1816,7 +1816,11 @@ FN ext_needs_words
     test r13d, NEEDS_SECRETS
     jz 82f
     call item
-82: mov rsi, [rbx + EXT_nb_kernels]  # notebooks: kernels run as the user
+82: lea rsi, [rip + .Ln_audio]
+    test r13d, NEEDS_AUDIO
+    jz 83f
+    call item
+83: mov rsi, [rbx + EXT_nb_kernels]  # notebooks: kernels run as the user
     test rsi, rsi
     jz 81f
     cmp byte ptr [rsi], 0
@@ -3353,6 +3357,7 @@ badge_colors: .long 0xff4f7fd9, 0xff3f9f6f, 0xffd9803f, 0xff9a6ad6, 0xffcf5050, 
 .Ln_runs: .asciz "run "
 .Ln_kernels: .asciz "run notebook kernels as you: "
 .Ln_nothing: .asciz "only use its own commands and settings"
+.Ln_audio: .asciz "access local audio devices and services"
 .Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_sep: .asciz ", "
 .Lt_intro: .asciz "Extensions add commands, marks and tools to rhun. Each one gets only the access it asks for."

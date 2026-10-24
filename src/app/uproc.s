@@ -10,6 +10,7 @@
 #                                             strings are borrowed (the caller's live until the spawn)
 #   uproc_which(name, envp)                   -> path to run (mem_free it), or 0: a name without a slash
 #                                             is looked up on that environment's PATH (Windows too)
+#   uproc_login_path()                        -> the PATH of uproc_envp(), or 0 (borrowed)
 #   uproc_spawn(argv, envp, cwd, in, out, err, pty) -> pid, or -errno (-EAGAIN with 128 running)
 #                                             argv[0] is the path; pty 1 makes `in` (a pty_open slave)
 #                                             the controlling terminal; else a session without one
@@ -555,25 +556,41 @@ name_in:
 FN uproc_which
     PROLOGUE
     mov rbx, rdi
-    mov r12, rsi
-    # PATH of that environment (any case of it on Windows), else rhun's own
-    xor esi, esi
-1:  mov rdi, [r12]
-    test rdi, rdi
+    mov rdi, rsi
+    call env_path
+    mov rdi, rbx
+    mov rsi, rax
+    call proc_which_in
+    EPILOGUE
+
+# uproc_login_path() -> the PATH value of uproc_envp() (the login shell's once known), or 0 when it
+#   has none (proc_which_in then searches rhun's own). Extensions get it, and their sandbox allows
+#   the run list's programs as found on it (ext.s, confine.s)
+FN uproc_login_path
+    PROLOGUE
+    call uproc_envp
+    mov rdi, rax
+    call env_path
+    EPILOGUE
+
+# env_path(envp) -> the value of its PATH (any case of it on Windows), or 0
+env_path:
+1:  mov rsi, [rdi]
+    test rsi, rsi
     jz 2f
-    add r12, 8
-    mov eax, [rdi]
+    add rdi, 8
+    mov eax, [rsi]
 .ifdef WINDOWS
     and eax, 0xdfdfdfdf         # "Path" as "PATH" (only letters fold to these four)
 .endif
     cmp eax, 0x48544150         # "PATH"
     jne 1b
-    cmp byte ptr [rdi + 4], '='
+    cmp byte ptr [rsi + 4], '='
     jne 1b
-    lea rsi, [rdi + 5]
-2:  mov rdi, rbx
-    call proc_which_in
-    EPILOGUE
+    lea rax, [rsi + 5]
+    ret
+2:  xor eax, eax
+    ret
 
 # ---------------- processes ----------------
 # A program's group can outlive its leader: a descendant that ignores SIGHUP and SIGTERM, or one

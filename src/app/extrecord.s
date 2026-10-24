@@ -828,7 +828,7 @@ FN ext_needs_wider
     jmp 5b
 6:  # a bit no phrase names: wider all the same
     mov eax, r15d
-    and eax, ~(NEEDS_DOC_READ | NEEDS_DOC_WRITE | NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE | NEEDS_HOME_READ | NEEDS_NETWORK | NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT | NEEDS_TERM_OUTPUT | NEEDS_GIT_READ | NEEDS_DEBUG | NEEDS_SECRETS)
+    and eax, ~(NEEDS_DOC_READ | NEEDS_DOC_WRITE | NEEDS_PROJECT_READ | NEEDS_PROJECT_WRITE | NEEDS_HOME_READ | NEEDS_NETWORK | NEEDS_TERMINAL | NEEDS_TERM_RUN | NEEDS_TERM_INPUT | NEEDS_TERM_OUTPUT | NEEDS_GIT_READ | NEEDS_DEBUG | NEEDS_SECRETS | NEEDS_AUDIO)
     jz 7f
     lea rsi, [rip + .Ln_more]
     call wider_item
@@ -1283,6 +1283,7 @@ put_num:
 .Ln_term_output: .asciz "read what they show and what you type there"
 .Ln_git: .asciz "read the project's Git history"
 .Ln_debug: .asciz "start debug adapters that run as you"
+.Ln_audio: .asciz "access local audio devices and services"
 .Ln_secrets: .asciz "store passwords and tokens in your keychain"
 .Ln_more: .asciz "use more of your system"
 .p2align 3
@@ -1290,7 +1291,7 @@ put_num:
 wider_bits:
     .quad NEEDS_HOME_READ, .Ln_home, NEEDS_NETWORK, .Ln_net, NEEDS_TERMINAL, .Ln_terminal
     .quad NEEDS_TERM_RUN, .Ln_term_run, NEEDS_TERM_INPUT, .Ln_term_input, NEEDS_TERM_OUTPUT, .Ln_term_output
-    .quad NEEDS_GIT_READ, .Ln_git, NEEDS_DEBUG, .Ln_debug, NEEDS_SECRETS, .Ln_secrets, 0, 0
+    .quad NEEDS_GIT_READ, .Ln_git, NEEDS_DEBUG, .Ln_debug, NEEDS_SECRETS, .Ln_secrets, NEEDS_AUDIO, .Ln_audio, 0, 0
 .Ln_when_kernels: .asciz " with your access as notebook kernels"
 .Ln_sep: .asciz ", "
 .Leq: .asciz " = "

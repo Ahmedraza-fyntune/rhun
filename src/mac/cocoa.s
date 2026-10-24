@@ -1240,8 +1240,47 @@ ns_mods:
 2:  tst x0, #NS_OPTION
     b.eq 3f
     orr w9, w9, #MOD_ALT
-3:  mov w0, w9
+3:  mov w10, #0
+    tst x0, #NS_CONTROL
+    b.eq 4f
+    mov w10, #1
+4:  STW w10, g_mac_control_click
+    mov w0, w9
     ret
+
+// Paired releases for extension pictures that negotiated view-key-state.
+v_keyUp:
+    IMP
+    mov x19, x2
+    mov x0, x19
+    MSG modifierFlags
+    bl ns_mods
+    mov w20, w0
+    mov x0, x19
+    MSG keyCode
+    and w21, w0, #0xffff
+    cmp w21, #128
+    b.hs 2f
+    ADR x9, special_keys
+    ldr w22, [x9, w21, uxtw #2]
+    cbnz w22, 3f
+2:  mov w0, w21
+    mov w1, #0
+    bl ascii_key
+    mov w22, w0
+3:  cbz w22, 4f
+    mov w0, w22
+    mov w1, w20
+    XCALL viewpic_key_up
+4:  IMPRET
+
+v_flagsChanged:
+    IMP
+    mov x0, x2
+    MSG modifierFlags
+    bl ns_mods
+    XCALL app_on_modifiers
+    IMPRET
 
 // keyDown:(event)
 v_keyDown:
@@ -2211,8 +2250,8 @@ view_methods:
     METHOD mouseDownCanMoveWindow, v_no, t_B
     METHOD wantsUpdateLayer, v_yes, t_B
     METHOD keyDown_, v_keyDown, t_v_id
-    METHOD keyUp_, v_doCommand, t_v_id
-    METHOD flagsChanged_, v_doCommand, t_v_id
+    METHOD keyUp_, v_keyUp, t_v_id
+    METHOD flagsChanged_, v_flagsChanged, t_v_id
     METHOD mouseDown_, v_mouseDown, t_v_id
     METHOD mouseUp_, v_mouseUp, t_v_id
     METHOD mouseDragged_, v_mouseMoved, t_v_id
