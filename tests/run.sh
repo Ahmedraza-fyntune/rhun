@@ -86,6 +86,7 @@ check memmove build/memmove_test
 python3 tests/mem-try.py || fail=1
 python3 tests/mem-helpers.py || fail=1
 check syntax build/syntax_test
+check syntax-word build/grammar_test --try tests/data/region-word.syn tests/data/region-word.txt
 check themes build/theme_test
 check term build/term_test
 check diff build/diff_test

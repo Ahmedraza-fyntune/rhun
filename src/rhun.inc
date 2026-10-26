@@ -1947,7 +1947,8 @@ F REG_class, 1
 F REG_esc, 1
 F REG_multi, 1
 F REG_bol, 1            # only at line start (after blanks)
-F REG_pad, 2
+F REG_word, 1           # opener has identifier boundaries on both sides
+F REG_pad, 1
 ENDSTRUCT REG_SIZE
 
 # prompt kinds (palette used as a one-line input)

@@ -1,0 +1,25 @@
+warnings 0
+use
+aaa 0
+use target
+aaaaaaaaaa 0
+  use target
+00aaaaaaaaaa 0
+reuse target
+000000000000 0
+user: string
+000080000000 0
+useful: int
+00000080000 0
+use-target
+0000000000 0
+-use target
+00000000000 0
+x.use target
+09aaaaaaaaaa 0
+passwords: text
+444444444444444 0
+wording: text
+7777777777777 0
+iffy: text
+1111111111 0

@@ -40,3 +40,4 @@ Minefile
 b.odd
 c.gry
 d.pln
+model.type
