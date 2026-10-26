@@ -15,7 +15,7 @@ plist = plistlib.loads((ROOT / 'assets/mac/Info.plist').read_bytes())
 assert all('public.data' not in d.get('LSItemContentTypes', []) for d in plist['CFBundleDocumentTypes'])
 source = next(d for d in plist['CFBundleDocumentTypes'] if d['CFBundleTypeName'] == 'Source and configuration')
 assert 'LSItemContentTypes' not in source
-assert {'txt', 'md', 'py', 'rs', 'json', 'ts', 'yaml'} <= set(source['CFBundleTypeExtensions'])
+assert {'txt', 'md', 'py', 'rs', 'json', 'ts', 'type', 'yaml'} <= set(source['CFBundleTypeExtensions'])
 assert not {'png', 'jpg', 'gif', 'qoi'} & set(source['CFBundleTypeExtensions'])
 images = next(d for d in plist['CFBundleDocumentTypes'] if d['CFBundleTypeName'] == 'Image extensions')
 assert 'qoi' in images['CFBundleTypeExtensions']
