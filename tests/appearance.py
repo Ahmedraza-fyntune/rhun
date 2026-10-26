@@ -90,6 +90,7 @@ class Appearance(unittest.TestCase):
                 saved = self.saved()
                 self.assertEqual(saved[key], 'everforest')
                 self.assertEqual(saved['theme'], 'rhun-dark')
+                self.assertEqual(saved['follow_system'], 'true')
                 other = 'dark_theme' if key == 'light_theme' else 'light_theme'
                 self.assertEqual(saved[other], 'rhun-' + other.split('_')[0])
         # without follow_system, theme
@@ -98,15 +99,47 @@ class Appearance(unittest.TestCase):
         self.assertEqual(self.saved(), {'follow_system': 'false', 'theme': 'everforest',
                                         'dark_theme': 'rhun-dark', 'light_theme': 'rhun-light'})
 
+    def test_inactive_theme_choice_stays_after_confirmation_and_restart(self):
+        for system, slot, choice in (('light', 'dark_theme', 'nord'),
+                                      ('dark', 'light_theme', 'github-light')):
+            with self.subTest(system=system):
+                states = self.states(['cmd settings', 'type ui.' + slot, 'click 800 348',
+                                      'type ' + choice.replace('-', ' '), 'print-appearance', 'key Return',
+                                      'print-appearance', 'appearance ' + ('dark' if system == 'light' else 'light'),
+                                      'print-appearance', 'appearance ' + system,
+                                      'print-appearance'],
+                                     config='[ui]\nsidebar = false\nagents_panel = false\n',
+                                     system=system)
+                self.assertEqual([s['shown'] for s in states],
+                                 ['rhun-' + slot.split('_')[0], *([choice] * 3)])
+                self.assertEqual([s['follow'] for s in states], ['1', '0', '0', '0'])
+                saved = self.saved()
+                self.assertEqual(saved[slot], choice)
+                self.assertEqual(saved['theme'], choice)
+                self.assertEqual(saved['follow_system'], 'false')
+                restarted, = self.states(['print-appearance'], config=None, system=system)
+                self.assertEqual((restarted['shown'], restarted['follow']), (choice, '0'))
+
+    def test_cancelling_inactive_theme_keeps_system_following(self):
+        states = self.states(['cmd settings', 'type ui.dark_theme', 'click 800 348',
+                              'type nord', 'print-appearance', 'key Escape', 'print-appearance',
+                              'appearance dark', 'print-appearance'],
+                             config='[ui]\nsidebar = false\nagents_panel = false\n', system='light')
+        self.assertEqual([s['shown'] for s in states], ['rhun-dark', 'rhun-light', 'rhun-dark'])
+        self.assertTrue(all(s['follow'] == '1' and s['dark'] == 'rhun-dark' for s in states))
+
     def test_theme_list_preview_escape_and_a_system_change_while_open(self):
         # Escape shows the settings' theme again; a mode change while the list is open waits for it
         states = self.states(['cmd select_theme', 'type github', 'key Down',
                               'print-appearance', 'appearance light', 'print-appearance',
                               'key Escape', 'print-appearance'], system='dark')
         self.assertEqual([s['shown'] for s in states], ['github-light', 'github-light', 'rhun-light'])
-        # accepting after the change still saves for the mode the list was opened for
-        self.states(['cmd select_theme', 'appearance light', 'type nord', 'key Return',
-                     'print-appearance'], system='dark')
+        # Accepting after the system changed keeps the choice as a fixed theme, while still
+        # saving the setting the list was opened for.
+        states = self.states(['cmd select_theme', 'appearance light', 'type nord', 'key Return',
+                              'print-appearance'], system='dark')
+        self.assertEqual((states[0]['shown'], states[0]['follow']), ('nord', '0'))
+        self.assertEqual(self.saved()['theme'], 'nord')
         self.assertEqual(self.saved()['dark_theme'], 'nord')
         self.assertEqual(self.saved()['light_theme'], 'rhun-light')
 
