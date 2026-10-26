@@ -27,7 +27,7 @@ class Saves(host.Host):
                 time.sleep(.05)
         super().tearDown()
 
-    def formatter(self, mode='ok', delay=0, owners=('alice',), timeout=2000, on='command'):
+    def formatter(self, mode='ok', delay=0, owners=('alice',), timeout=2000, on='command', startup_delay=0):
         config=self.work/'config/rhun/config'
         config.write_text(config.read_text()+f'\n[files]\nformat_on_save = true\nformat_on_save_timeout = {timeout}\n')
         root=self.work/'formatters'
@@ -44,6 +44,7 @@ from pathlib import Path
 # bodies are counted in bytes: no CRLF translation or code page on Windows
 sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 log = open(Path(os.environ['RHUN_STATE'])/'requests.log','a',buffering=1)
+time.sleep(STARTUP_DELAY)
 print('hello 1 format',flush=True)
 for raw in sys.stdin.buffer:
     line=raw.decode()
@@ -73,7 +74,7 @@ for raw in sys.stdin.buffer:
     if line.startswith('0 bye'): break
 '''
             (folder/'main.py').write_text(
-                f'MODE={json.dumps(mode)}\nDELAY={delay!r}\nFOREIGN={json.dumps(str(self.proj/"foreign.txt"))}\n'+program)
+                f'MODE={json.dumps(mode)}\nDELAY={delay!r}\nSTARTUP_DELAY={startup_delay!r}\nFOREIGN={json.dumps(str(self.proj/"foreign.txt"))}\n'+program)
         return root
 
     def requests(self, owner='alice'):
@@ -155,8 +156,9 @@ for raw in sys.stdin.buffer:
 
     def test_delayed_save_does_not_write_before_formatting(self):
         # First process cancels while the formatter is waiting, so disk remains untouched.
-        out=self.run_editor(['type y','cmd save','wait 150','cmd cancel_save','wait 700','print-state'],
-            exts=self.formatter(delay=.5))
+        out=self.run_editor(['type y','cmd save','wait-ext format running','wait 0',
+            'cmd cancel_save','wait 700','print-state'],
+            exts=self.formatter(mode='hang',startup_delay=.35,timeout=15000))
         self.assertEqual((self.proj/'a.txt').read_text(),'hello world\nsecond line\n')
         self.assertIn(' dirty=1 ',self.states(out)[0])
         self.assertIn('0 cancel ',self.requests())
@@ -177,11 +179,24 @@ for raw in sys.stdin.buffer:
         self.assertIn(' dirty=0 ',self.states(out)[0])
 
     def test_bypass_coalesces_pending_save_and_writes_unformatted(self):
-        out=self.run_editor(['type y','cmd save','wait 100','cmd save_without_formatting',
-            'wait 800','print-state','print-doc'],exts=self.formatter(delay=.5))
+        # Wait through a slow cold start, then keep the request pending until bypass cancels it.
+        out=self.run_editor(['type y','cmd save','wait-ext format running','wait 0',
+            'cmd save_without_formatting','wait 800','print-state','print-doc'],
+            exts=self.formatter(mode='hang',startup_delay=.35,timeout=15000))
         self.assertEqual((self.proj/'a.txt').read_text(),'yhello world\nsecond line\n')
         self.assertIn(' dirty=0 ',self.states(out)[0])
-        self.assertEqual(self.requests().count(' format '),1)
+        self.assertIn('ext=format state=running',out)
+        requests=self.requests()
+        ids=re.findall(r'(?m)^(\d+) format ',requests)
+        self.assertEqual(len(ids),1,requests)
+        self.assertIn('0 cancel '+ids[0]+'\n',requests)
+
+    def test_bypass_before_formatter_request_skips_formatting(self):
+        out=self.run_editor(['type y','cmd save','cmd save_without_formatting',
+            'wait 800','print-state'],exts=self.formatter(startup_delay=.35))
+        self.assertEqual((self.proj/'a.txt').read_text(),'yhello world\nsecond line\n')
+        self.assertIn(' dirty=0 ',self.states(out)[0])
+        self.assertNotIn(' format ',self.requests())
 
     def test_duplicate_save_writes_and_formats_once(self):
         self.run_editor(['type y','cmd save','wait 100','cmd save','wait 800'],exts=self.formatter(delay=.5))
@@ -307,8 +322,8 @@ for raw in sys.stdin.buffer:
 
     def test_cancelled_save_all_stops_before_second_document(self):
         out=self.run_editor(['type y','open '+str(self.proj/'b.go'),'type z','cmd prev_tab',
-            'cmd save_all','wait 100','cmd cancel_save','wait 1000','print-state'],
-            exts=self.formatter(delay=.4))
+            'cmd save_all','wait-ext format running','wait 0','cmd cancel_save','wait 1000','print-state'],
+            exts=self.formatter(mode='hang',startup_delay=.35,timeout=15000))
         self.assertEqual((self.proj/'a.txt').read_text(),'hello world\nsecond line\n')
         self.assertEqual((self.proj/'b.go').read_text(),'package b\n')
         self.assertEqual(self.requests().count(' format '),1)

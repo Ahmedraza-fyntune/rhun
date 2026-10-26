@@ -15,9 +15,12 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - name: Tools
-        timeout-minutes: 10
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq binutils curl wget git python3 xvfb openbox xdotool x11-utils sway weston gcc pkg-config libwayland-dev wayland-protocols strace zsh fish tcsh dbus xsettingsd xdg-desktop-portal xdg-desktop-portal-gtk dconf-service dconf-cli libglib2.0-bin gsettings-desktop-schemas
+      - name: Ubuntu package indexes
+        timeout-minutes: 3
+        run: sudo bash tools/setup-linux-desktop.sh update
+      - name: Desktop tools
+        timeout-minutes: 7
+        run: sudo bash tools/setup-linux-desktop.sh install
       - name: Build
         run: ./build.sh test
       - name: Window placement across restarts
