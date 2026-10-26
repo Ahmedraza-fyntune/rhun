@@ -84,6 +84,7 @@ buf_w: .long 0
 buf_h: .long 0
 
 configured: .long 0
+wl_normal: .zero WPOS_SIZE
 pend_w: .long 0
 pend_h: .long 0
 pend_states: .long 0
@@ -1115,12 +1116,22 @@ logical_to_phys:
     ret
 
 apply_configure:
+    mov r8d, [rip + g_win_states]
+    and r8d, 11                # restore normal size when leaving maximized/fullscreen/tiled
     mov eax, [rip + pend_states]
+    test eax, 11
+    jz 8f
+    xor r8d, r8d
+8:
     mov [rip + g_win_states], eax
     mov eax, [rip + pend_w]
     test eax, eax
     jnz 1f
     mov eax, [rip + win_w]
+    test r8d, r8d
+    jz 8f
+    mov eax, [rip + wl_normal + WPOS_w]
+8:
     test eax, eax
     jnz 1f
     mov eax, 1280
@@ -1129,10 +1140,26 @@ apply_configure:
     test eax, eax
     jnz 2f
     mov eax, [rip + win_h]
+    test r8d, r8d
+    jz 8f
+    mov eax, [rip + wl_normal + WPOS_h]
+8:
     test eax, eax
     jnz 2f
     mov eax, 820
 2:  mov [rip + win_h], eax
+    xor ecx, ecx
+    test dword ptr [rip + g_win_states], 1
+    jz 3f
+    mov ecx, 3
+3:  mov [rip + wl_normal + WPOS_max], ecx
+    test dword ptr [rip + g_win_states], 11
+    jnz 4f
+    mov eax, [rip + win_w]
+    mov [rip + wl_normal + WPOS_w], eax
+    mov eax, [rip + win_h]
+    mov [rip + wl_normal + WPOS_h], eax
+4:
     mov dword ptr [rip + configured], 1
     call apply_size
     ret
@@ -3042,6 +3069,16 @@ wl_activate:
 FN wl_open_window
     PROLOGUE 16
     mov rbx, rdi
+    mov dword ptr [rip + wl_normal + WPOS_magic], WPOS_MAGIC
+    mov dword ptr [rip + wl_normal + WPOS_w], 1280
+    mov dword ptr [rip + wl_normal + WPOS_h], 820
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + wl_normal]
+    call window_state_load
+    mov eax, [rip + wl_normal + WPOS_w]
+    mov [rip + win_w], eax
+    mov eax, [rip + wl_normal + WPOS_h]
+    mov [rip + win_h], eax
     call wl_new_id
     mov [rip + id_surface], eax
     MSG [rip + id_compositor], 0
@@ -3086,6 +3123,12 @@ FN wl_open_window
     ARG 560
     ARG 360
     END
+    cmp dword ptr [rip + wl_normal + WPOS_max], 0
+    je 8f
+    MSG [rip + id_toplevel], 9   # request the remembered maximized state before the first commit
+    END
+8:  lea rax, [rip + wl_window_save]
+    mov [rip + g_window_save], rax
     mov dword ptr [rip + g_csd], 1
     cmp dword ptr [rip + id_deco_mgr], 0
     je 2f
@@ -3152,7 +3195,13 @@ FN wl_open_window
     call wl_roundtrip
     EPILOGUE
 
+wl_window_save:
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + wl_normal]
+    jmp window_state_save
+
 .section .rodata
+.Lwindow_backend: .asciz "wayland"
 .p2align 3
 # interface name, id slot, max version
 global_table:

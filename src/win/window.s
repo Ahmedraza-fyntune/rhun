@@ -14,6 +14,8 @@ win_pixels: .quad 0
 win_capacity: .quad 0
 win_width: .long 0
 win_height: .long 0
+win_placement: .zero 44         # WINDOWPLACEMENT through rcNormalPosition
+win_saved: .zero WPOS_SIZE
 win_surrogate: .long 0
 win_drop_char: .long 0          # a chord's second stroke went as WM_KEYDOWN: drop its WM_CHAR
 win_cursor: .quad 0
@@ -82,6 +84,9 @@ FN win_open_window
     mov rcx, [rip + win_hwnd]
     API GetDpiForWindow
     call win_dpi
+    lea rax, [rip + win_window_save]
+    mov [rip + g_window_save], rax
+    call win_window_restore
     mov rcx, [rip + win_hwnd]
     mov edx, 5
     API ShowWindow
@@ -90,6 +95,75 @@ FN win_open_window
     EPILOGUE
 8:  lea rdi, [rip + .Lwindow_error]
     call die
+
+# WINDOWPLACEMENT keeps workspace coordinates and the normal rect even while maximized/minimized.
+win_window_restore:
+    PROLOGUE 96
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + win_saved]
+    call window_state_load
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + win_placement], 44
+    mov rcx, [rip + win_hwnd]
+    lea rdx, [rip + win_placement]
+    API GetWindowPlacement
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + win_placement + 4], 0
+    mov dword ptr [rip + win_placement + 8], 1 # SW_SHOWNORMAL, never reopen minimized
+    cmp dword ptr [rip + win_saved + WPOS_max], 0
+    je 1f
+    mov dword ptr [rip + win_placement + 8], 3 # SW_SHOWMAXIMIZED
+1:  mov eax, [rip + win_saved + WPOS_x]
+    mov [rip + win_placement + 28], eax
+    add eax, [rip + win_saved + WPOS_w]
+    mov [rip + win_placement + 36], eax
+    mov eax, [rip + win_saved + WPOS_y]
+    mov [rip + win_placement + 32], eax
+    add eax, [rip + win_saved + WPOS_h]
+    mov [rip + win_placement + 40], eax
+    mov rcx, [rip + win_hwnd]
+    lea rdx, [rip + win_placement]
+    API SetWindowPlacement       # Windows brings an obsolete monitor's placement back on screen
+9:  EPILOGUE
+
+win_window_save:
+    PROLOGUE 96
+    mov dword ptr [rip + win_placement], 44
+    mov rcx, [rip + win_hwnd]
+    lea rdx, [rip + win_placement]
+    API GetWindowPlacement
+    test eax, eax
+    jz 9f
+    mov dword ptr [rip + win_saved + WPOS_magic], WPOS_MAGIC
+    mov eax, [rip + win_placement + 28]
+    mov [rip + win_saved + WPOS_x], eax
+    mov edx, [rip + win_placement + 36]
+    sub edx, eax
+    mov [rip + win_saved + WPOS_w], edx
+    mov eax, [rip + win_placement + 32]
+    mov [rip + win_saved + WPOS_y], eax
+    mov edx, [rip + win_placement + 40]
+    sub edx, eax
+    mov [rip + win_saved + WPOS_h], edx
+    xor eax, eax
+    cmp dword ptr [rip + win_placement + 8], 3
+    je 1f
+    cmp dword ptr [rip + win_placement + 8], 2
+    jne 2f
+    test dword ptr [rip + win_placement + 4], 2 # WPF_RESTORETOMAXIMIZED
+    jz 2f
+1:  mov eax, 3
+2:  mov [rip + win_saved + WPOS_max], eax
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + win_saved]
+    call window_state_save
+9:  EPILOGUE
+
+.section .rdata
+.Lwindow_backend: .asciz "windows"
+.text
 
 # An explicit file launch brings its window forward, including a minimized startup state.
 FN win_activate

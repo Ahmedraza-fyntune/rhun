@@ -7,8 +7,8 @@
 .equ PEND_MAX, 256              # keys waiting for a new keymap
 .equ AUTH_FAMILY_LOCAL, 256
 .equ AUTH_FAMILY_WILD, 65535
-.equ EVMASK, 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x8000 | 0x20000 | 0x200000
-# KeyPress KeyRelease ButtonPress ButtonRelease EnterWindow LeaveWindow PointerMotion Exposure StructureNotify FocusChange
+.equ EVMASK, 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x8000 | 0x20000 | 0x200000 | 0x400000
+# KeyPress KeyRelease ButtonPress ButtonRelease EnterWindow LeaveWindow PointerMotion Exposure StructureNotify FocusChange PropertyChange
 
 .bss
 .p2align 4
@@ -36,6 +36,11 @@ id_next: .long 0
 x_paste_root:
 root: .long 0
 root_depth: .long 0
+screen_w: .long 0
+screen_h: .long 0
+x_position_dirty: .long 0
+x_state_pending: .long 0       # state changed; configure events need a confirmed state again
+x_normal: .zero WPOS_SIZE
 .globl x_send_main_window
 x_send_main_window:
 win: .long 0
@@ -86,6 +91,7 @@ a_incr: .long 0
 a_net_wm_state: .long 0
 a_max_h: .long 0
 a_max_v: .long 0
+a_fullscreen: .long 0
 a_wm_change_state: .long 0
 a_xs_selection: .long 0         # _XSETTINGS_S0, owned by the XSETTINGS manager
 a_xs_settings: .long 0
@@ -256,13 +262,17 @@ x_process:
 x_keymap_refresh:
     push rbx
     mov dword ptr [rip + keymap_busy], 1
-1:  cmp dword ptr [rip + keymap_stale], 0
+1:  cmp dword ptr [rip + g_quit], 0
+    jne 5f
+    cmp dword ptr [rip + keymap_stale], 0
     je 2f
     mov dword ptr [rip + keymap_stale], 0
     call x_load_keymap
     jmp 1b
 2:  xor ebx, ebx
-3:  cmp ebx, [rip + pend_n]
+3:  cmp dword ptr [rip + g_quit], 0
+    jne 5f
+    cmp ebx, [rip + pend_n]
     jae 4f
     lea rax, [rip + pend]
     mov ecx, [rax + rbx*8 + 4]
@@ -273,12 +283,15 @@ x_keymap_refresh:
     cmp dword ptr [rip + keymap_stale], 0
     jne 1b
     jmp 3b
+5:  mov dword ptr [rip + keymap_stale], 0
 4:  mov dword ptr [rip + pend_n], 0
     mov dword ptr [rip + keymap_busy], 0
     pop rbx
     ret
 
 # x_message(ptr, len)
+.globl x_wire_message
+x_wire_message:
 x_message:
     PROLOGUE
     mov rbx, rdi
@@ -289,6 +302,8 @@ x_message:
     jz .Lxm_error
     cmp eax, 1
     je .Lxm_reply
+    cmp dword ptr [rip + g_quit], 0
+    jne .Lxm_closing
     cmp eax, 2
     je .Lxm_key
     cmp eax, 3
@@ -329,11 +344,34 @@ x_message:
     cmp byte ptr [rbx + 1], 1
     jbe .Lxm_mapping
     jmp .Lxm_ret
+.Lxm_closing:
+    # Final placement queries still consume replies, but must not run input after quit.
+    cmp eax, 22
+    je 1f
+    cmp eax, 28
+    jne .Lxm_ret
+    mov eax, [rbx + 4]
+    cmp eax, [rip + win]
+    jne .Lxm_ret
+    mov eax, [rbx + 8]
+    cmp eax, [rip + a_net_wm_state]
+    jne .Lxm_ret
+    mov dword ptr [rip + x_state_pending], 1
+    jmp 2f
+1:  mov eax, [rbx + 8]
+    cmp eax, [rip + win]
+    jne .Lxm_ret
+    call x_window_configure_event
+2:  mov dword ptr [rip + x_position_dirty], 1
+    jmp .Lxm_ret
 .Lxm_error:
+    cmp dword ptr [rip + g_quit], 0
+    jne .Lxm_error_waited
     mov rdi, rbx
     call x_send_error
     mov rdi, rbx
     call x_paste_error
+.Lxm_error_waited:
     # errors are non-fatal for us (e.g. a stale property), but one answering the request a reply is
     # awaited for ends the wait: reply_buf then starts with 0
     movzx eax, word ptr [rbx + 2]
@@ -349,6 +387,8 @@ x_message:
     mov dword ptr [rip + got_reply], 1
     jmp .Lxm_ret
 .Lxm_reply:
+    cmp dword ptr [rip + g_quit], 0
+    jne .Lxm_reply_waited
     mov rdi, rbx
     mov esi, r12d
     call x_send_reply
@@ -359,6 +399,7 @@ x_message:
     call x_paste_reply
     test eax, eax
     jnz .Lxm_ret
+.Lxm_reply_waited:
     movzx eax, word ptr [rbx + 2]
     cmp eax, [rip + want_seq]
     jne .Lxm_ret
@@ -479,6 +520,8 @@ x_message:
     mov eax, [rbx + 8]
     cmp eax, [rip + win]
     jne .Lxm_ret
+    call x_window_configure_event
+    mov dword ptr [rip + x_position_dirty], 1
     movzx eax, word ptr [rbx + 20]
     movzx ecx, word ptr [rbx + 22]
     cmp eax, [rip + win_w]
@@ -525,6 +568,15 @@ x_message:
     call x_send_property
     mov rdi, rbx
     call x_paste_property
+    mov eax, [rbx + 4]
+    cmp eax, [rip + win]
+    jne 1f
+    mov eax, [rbx + 8]
+    cmp eax, [rip + a_net_wm_state]
+    jne 1f
+    mov dword ptr [rip + x_state_pending], 1
+    mov dword ptr [rip + x_position_dirty], 1
+1:
     # the XSETTINGS manager's settings changed
     mov eax, [rbx + 4]
     test eax, eax
@@ -1206,6 +1258,10 @@ FN x_connect
     mov [rip + root], eax
     movzx eax, byte ptr [r15 + 38]
     mov [rip + root_depth], eax
+    movzx eax, word ptr [r15 + 20]
+    mov [rip + screen_w], eax
+    movzx eax, word ptr [r15 + 22]
+    mov [rip + screen_h], eax
     # drop the setup reply
     mov ecx, [rip + xin_len]
     sub ecx, r13d
@@ -1426,7 +1482,7 @@ x_cursor_init:
 
 # x_open_window(title)
 FN x_open_window
-    PROLOGUE 64
+    PROLOGUE 128
     mov r15, rdi
     call x_big_requests
     call x_xkb_use
@@ -1470,6 +1526,9 @@ FN x_open_window
     lea rdi, [rip + .La_max_v]
     call x_intern
     mov [rip + a_max_v], eax
+    lea rdi, [rip + .La_fullscreen]
+    call x_intern
+    mov [rip + a_fullscreen], eax
     lea rdi, [rip + .La_change_state]
     call x_intern
     mov [rip + a_wm_change_state], eax
@@ -1489,8 +1548,47 @@ FN x_open_window
     # window
     call x_new_id
     mov [rip + win], eax
-    mov dword ptr [rip + win_w], 1280
-    mov dword ptr [rip + win_h], 820
+    mov dword ptr [rip + x_normal + WPOS_magic], WPOS_MAGIC
+    mov dword ptr [rip + x_normal + WPOS_w], 1280
+    mov dword ptr [rip + x_normal + WPOS_h], 820
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + x_normal]
+    call window_state_load
+    mov r14d, eax
+    test eax, eax
+    jz 1f
+    # Monitor changes must not leave the restored window outside the current screen.
+    lea rbx, [rip + x_normal]
+    mov eax, [rip + screen_w]
+    cmp [rbx + WPOS_w], eax
+    cmovb eax, [rbx + WPOS_w]
+    mov [rbx + WPOS_w], eax
+    mov ecx, [rip + screen_w]
+    sub ecx, eax
+    mov eax, [rbx + WPOS_x]
+    xor edx, edx
+    test eax, eax
+    cmovs eax, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [rbx + WPOS_x], eax
+    mov eax, [rip + screen_h]
+    cmp [rbx + WPOS_h], eax
+    cmovb eax, [rbx + WPOS_h]
+    mov [rbx + WPOS_h], eax
+    mov ecx, [rip + screen_h]
+    sub ecx, eax
+    mov eax, [rbx + WPOS_y]
+    xor edx, edx
+    test eax, eax
+    cmovs eax, edx
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [rbx + WPOS_y], eax
+1:  mov eax, [rip + x_normal + WPOS_w]
+    mov [rip + win_w], eax
+    mov eax, [rip + x_normal + WPOS_h]
+    mov [rip + win_h], eax
     lea rdi, [rsp]
     xor esi, esi
     mov edx, 64
@@ -1503,8 +1601,14 @@ FN x_open_window
     mov [rsp + 4], eax
     mov eax, [rip + root]
     mov [rsp + 8], eax
-    mov word ptr [rsp + 16], 1280
-    mov word ptr [rsp + 18], 820
+    mov eax, [rip + x_normal + WPOS_x]
+    mov [rsp + 12], ax
+    mov eax, [rip + x_normal + WPOS_y]
+    mov [rsp + 14], ax
+    mov eax, [rip + win_w]
+    mov [rsp + 16], ax
+    mov eax, [rip + win_h]
+    mov [rsp + 18], ax
     mov word ptr [rsp + 22], 1      # InputOutput
     mov dword ptr [rsp + 24], 0     # CopyFromParent visual
     mov dword ptr [rsp + 28], 0x0802    # CWBackPixel | CWEventMask
@@ -1543,6 +1647,51 @@ FN x_open_window
     call x_change_prop
     mov rdi, r15
     call x_title
+    test r14d, r14d
+    jz 1f
+    # StaticGravity keeps the saved client origin stable across native decorations.
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, 72
+    call memset
+    mov dword ptr [rsp], 0x20c  # PPosition | PSize | PWinGravity
+    mov eax, [rip + x_normal + WPOS_x]
+    mov [rsp + 4], eax
+    mov eax, [rip + x_normal + WPOS_y]
+    mov [rsp + 8], eax
+    mov eax, [rip + win_w]
+    mov [rsp + 12], eax
+    mov eax, [rip + win_h]
+    mov [rsp + 16], eax
+    mov dword ptr [rsp + 68], 10 # StaticGravity
+    mov edi, [rip + win]
+    mov esi, 40                # WM_NORMAL_HINTS
+    mov edx, 41                # WM_SIZE_HINTS
+    mov ecx, 32
+    mov r8, rsp
+    mov r9d, 18
+    call x_change_prop
+1:  xor ebx, ebx
+    test dword ptr [rip + x_normal + WPOS_max], 1
+    jz 2f
+    mov eax, [rip + a_max_h]
+    mov [rsp], eax
+    inc ebx
+2:  test dword ptr [rip + x_normal + WPOS_max], 2
+    jz 3f
+    mov eax, [rip + a_max_v]
+    mov [rsp + rbx*4], eax
+    inc ebx
+3:  test ebx, ebx
+    jz 4f
+    mov edi, [rip + win]
+    mov esi, [rip + a_net_wm_state]
+    mov edx, 4                 # ATOM
+    mov ecx, 32
+    mov r8, rsp
+    mov r9d, ebx
+    call x_change_prop
+4:
     # the root's structure events bring MANAGER messages: an XSETTINGS manager starting later
     mov byte ptr [rsp], 2       # ChangeWindowAttributes
     mov byte ptr [rsp + 1], 0
@@ -1567,6 +1716,9 @@ FN x_open_window
     call x_flush
     mov dword ptr [rip + g_csd], 0
     call x_resize_fb
+    lea rax, [rip + x_window_save]
+    mov [rip + g_window_save], rax
+    mov dword ptr [rip + x_position_dirty], 1
     # vtable
     lea rax, [rip + x_clip_write]
     mov [rip + g_plat + P_clip_write], rax
@@ -1619,12 +1771,16 @@ x_timeout:
     jmp 2f
 3:  mov eax, ebx
 2:  pop rbx
+    cmp dword ptr [rip + x_position_dirty], 0
+    jne 4f
     cmp dword ptr [rip + g_dirty], 0
     je 1f
-    xor eax, eax
+4:  xor eax, eax
 1:  ret
 
 x_tick:
+    cmp dword ptr [rip + g_quit], 0
+    jne .Lxt_quit
     push rbx
     call x_paste_tick
     call x_send_tick
@@ -1635,10 +1791,181 @@ x_tick:
     # next one), which may change XSETTINGS again
     call x_process
     jmp 1b
-2:  pop rbx
+2:  cmp dword ptr [rip + x_position_dirty], 0
+    je 3f
+    call x_window_refresh
+    call x_process
+3:  pop rbx
     cmp dword ptr [rip + keymap_stale], 0
     jne x_keymap_refresh
+.Lxt_quit:
     ret
+
+# Keep normal configure events before a state-change barrier. A busy editor may receive its last
+# normal resize/move and the following maximization together, when queries only see maximized bounds.
+# Real ConfigureNotify coordinates are relative to the frame; synthetic coordinates are root-relative.
+x_window_configure_event:
+    cmp dword ptr [rip + x_state_pending], 0
+    jne 9f
+    test dword ptr [rip + g_win_states], 2
+    jnz 9f
+    mov edx, [rip + x_normal + WPOS_max]
+    test edx, 1
+    jnz 1f
+    movzx eax, word ptr [rbx + 20]
+    mov [rip + x_normal + WPOS_w], eax
+    test byte ptr [rbx], 0x80
+    jz 1f
+    movsx eax, word ptr [rbx + 16]
+    mov [rip + x_normal + WPOS_x], eax
+1:  test edx, 2
+    jnz 9f
+    movzx eax, word ptr [rbx + 22]
+    mov [rip + x_normal + WPOS_h], eax
+    test byte ptr [rbx], 0x80
+    jz 9f
+    movsx eax, word ptr [rbx + 18]
+    mov [rip + x_normal + WPOS_y], eax
+9:  ret
+
+# Only outside x_message: synchronous replies may compact the input buffer.
+x_window_refresh:
+    PROLOGUE 64
+    lea rdi, [rsp + 32]
+    lea rsi, [rip + x_normal]
+    mov edx, WPOS_SIZE
+    call memcpy
+    mov dword ptr [rip + x_position_dirty], 0
+    lea rdi, [rsp]
+    xor esi, esi
+    mov edx, 32
+    call memset
+    mov byte ptr [rsp], 20      # GetProperty _NET_WM_STATE
+    mov word ptr [rsp + 2], 6
+    mov eax, [rip + win]
+    mov [rsp + 4], eax
+    mov eax, [rip + a_net_wm_state]
+    mov [rsp + 8], eax
+    mov dword ptr [rsp + 12], 4 # ATOM
+    mov dword ptr [rsp + 20], 64
+    mov esi, 24
+    call x_window_reply
+    cmp byte ptr [rip + reply_buf], 1
+    jne 9f
+    xor r12d, r12d             # maximized horizontal / vertical, fullscreen
+    cmp byte ptr [rip + reply_buf + 1], 32
+    jne 3f
+    mov rcx, [rip + reply_extra_len]
+    mov rsi, [rip + reply_extra]
+1:  cmp rcx, 4
+    jb 3f
+    lodsd
+    cmp eax, [rip + a_max_h]
+    jne 2f
+    or r12d, 1
+2:  cmp eax, [rip + a_max_v]
+    jne 2f
+    or r12d, 2
+2:  cmp eax, [rip + a_fullscreen]
+    jne 2f
+    or r12d, 4
+2:  sub rcx, 4
+    jmp 1b
+3:  mov eax, r12d
+    and eax, 3
+    mov [rsp + 32 + WPOS_max], eax
+    test r12d, 4
+    jnz .Lxw_commit            # keep all normal bounds in fullscreen
+    cmp eax, 3
+    je .Lxw_commit             # both axes maximized
+    mov byte ptr [rsp], 14      # GetGeometry
+    mov word ptr [rsp + 2], 2
+    mov eax, [rip + win]
+    mov [rsp + 4], eax
+    mov esi, 8
+    call x_window_reply
+    cmp byte ptr [rip + reply_buf], 1
+    jne 9f
+    test r12d, 1
+    jnz 5f
+    movzx eax, word ptr [rip + reply_buf + 16]
+    mov [rsp + 32 + WPOS_w], eax
+5:  test r12d, 2
+    jnz 5f
+    movzx eax, word ptr [rip + reply_buf + 18]
+    mov [rsp + 32 + WPOS_h], eax
+5:  mov byte ptr [rsp], 40      # TranslateCoordinates client (0,0) to the root
+    mov word ptr [rsp + 2], 4
+    mov eax, [rip + win]
+    mov [rsp + 4], eax
+    mov eax, [rip + root]
+    mov [rsp + 8], eax
+    mov dword ptr [rsp + 12], 0
+    mov esi, 16
+    call x_window_reply
+    cmp byte ptr [rip + reply_buf], 1
+    jne 9f
+    test r12d, 1
+    jnz 5f
+    movsx eax, word ptr [rip + reply_buf + 12]
+    mov [rsp + 32 + WPOS_x], eax
+5:  test r12d, 2
+    jnz .Lxw_commit
+    movsx eax, word ptr [rip + reply_buf + 14]
+    mov [rsp + 32 + WPOS_y], eax
+.Lxw_commit:
+    # Native configure/state events during any reply invalidate the whole sample.
+    cmp dword ptr [rip + x_position_dirty], 0
+    jne 9f
+    lea rdi, [rsp + 32]
+    call window_state_valid
+    test eax, eax
+    jz 9f
+    lea rdi, [rip + x_normal]
+    lea rsi, [rsp + 32]
+    mov edx, WPOS_SIZE
+    call memcpy
+    mov ecx, [rip + g_win_states]
+    and ecx, ~3
+    cmp dword ptr [rsp + 32 + WPOS_max], 3
+    jne 4f
+    or ecx, 1
+4:  test r12d, 4
+    jz 4f
+    or ecx, 2
+4:  mov [rip + g_win_states], ecx
+    mov dword ptr [rip + x_state_pending], 0
+    mov eax, 1
+    EPILOGUE
+9:  xor eax, eax
+    EPILOGUE
+
+# The request starts at our caller's rsp, just above this return address.
+x_window_reply:
+    lea rdi, [rsp + 8]
+    push rbx
+    call x_req
+    mov eax, [rip + seq]
+    and eax, 0xffff
+    mov [rip + want_seq], eax
+    call x_wait_reply
+    pop rbx
+    ret
+
+x_window_save:
+    PROLOGUE
+    mov ebx, 3
+1:  call x_window_refresh
+    test eax, eax
+    jnz 2f
+    dec ebx
+    jnz 1b
+    jmp 9f                     # no stable sample: keep the previous saved placement
+2:
+    lea rdi, [rip + .Lwindow_backend]
+    lea rsi, [rip + x_normal]
+    call window_state_save
+9:  EPILOGUE
 
 # x_variant(): _GTK_THEME_VARIANT "dark" or "light" like the theme, for title bars window managers
 # draw (Mutter's on X11)
@@ -2777,6 +3104,8 @@ x_minimize:
 .La_sel_prop: .asciz "RHUN_SELECTION"
 .La_incr: .asciz "INCR"
 .La_net_wm_state: .asciz "_NET_WM_STATE"
+.La_fullscreen: .asciz "_NET_WM_STATE_FULLSCREEN"
+.Lwindow_backend: .asciz "x11"
 .La_net_active: .asciz "_NET_ACTIVE_WINDOW"
 .La_max_h: .asciz "_NET_WM_STATE_MAXIMIZED_HORZ"
 .La_max_v: .asciz "_NET_WM_STATE_MAXIMIZED_VERT"

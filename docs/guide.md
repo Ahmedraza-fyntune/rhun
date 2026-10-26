@@ -311,6 +311,10 @@ Started from a terminal, rhun goes on by itself: the prompt comes back at once, 
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
 
+Windows and X11 remember the last closed window's normal position, size and maximized state. X11 keeps the most recent normal bounds it can confirm; queued window-manager state changes while the editor is busy can leave earlier normal bounds. Wayland remembers its normal size and requests the saved maximized state; the compositor controls placement and may override those requests. On Wayland, tiled and fullscreen sizes do not replace the normal size.
+
+Minimized windows reopen visible. Window placement is independent of restoring project tabs, and headless runs do not change it. macOS keeps its existing system frame autosaving.
+
 The mouse pointer is the desktop's: the compositor draws it when it supports the cursor-shape protocol; otherwise rhun loads your Xcursor theme (`XCURSOR_THEME`, `XCURSOR_SIZE`, `~/.icons/default`, `/usr/share/icons/default`).
 
 On Wayland rhun draws its own title bar with window buttons, except on tiling compositors (Hyprland, Sway, niri, river, dwl, Qtile), where windows stay bare. `decorations = auto | client | server` under `[ui]` overrides this; `client` is rhun's title bar, `server` is the compositor's.

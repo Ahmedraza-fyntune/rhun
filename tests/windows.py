@@ -107,6 +107,9 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
          *(['--wine', args.wine] if args.wine else [])], check=True))
     check('doc-language', lambda: golden('doc-language', 'doc_language_test'))
     check('doc-language-choice', lambda: golden('doc-language-choice', 'doc_language_choice_test'))
+    if not args.wine:
+        check('window-state', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/window-state.py')], check=True))
     check('syntax-word', lambda: golden('syntax-word', 'grammar_test',
           ('--try', 'tests/data/region-word.syn', 'tests/data/region-word.txt')))
     check('file-read-limited', lambda: subprocess.run(

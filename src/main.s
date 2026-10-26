@@ -172,8 +172,14 @@ FN main
     jmp .Lm_exit
 3:  call loop_run
 .Lm_exit:
+    mov dword ptr [rip + g_quit], 1
     call app_clip_reset
     call headless_clip_reset
+    mov rax, [rip + g_window_save]
+    test rax, rax
+    jz 1f
+    call rax
+1:
     call dap_shutdown           # debugger: sessions disconnect, adapters are stopped
     call bp_save
     call uproc_quit_begin       # programs run as the user: SIGTERM now, up to 300 ms with the extensions

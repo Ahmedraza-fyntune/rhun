@@ -1,5 +1,7 @@
 LIBRARY user32.dll
 EXPORTS
+GetWindowPlacement
+SetWindowPlacement
     MessageBoxW
     GetKeyboardState
     SetKeyboardState

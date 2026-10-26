@@ -35,7 +35,11 @@ jobs:
       - name: Build
         id: build
         run: python tools/build-windows.py test
+      - name: Window placement across restarts
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: python tests/windows-window-state.py
       - name: Native tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           RHUN_TEST_ARTIFACTS: build/stabilization/windows
         run: python tests/windows.py
