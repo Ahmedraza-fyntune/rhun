@@ -221,7 +221,7 @@ tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 
 ### Windows
 
-The Windows build targets Windows 10 version 1809 or later and Windows 11, on x64. Native ARM64 and Windows code signing are not included in 0.16.0. Windows may display an unknown-publisher warning for the unsigned download.
+The Windows build targets Windows 10 version 1809 or later and Windows 11, on x64. Native ARM64 is not included. Releases are signed once SignPath Foundation accepts rhun (see the [code signing policy](https://rhun.app/code-signing/)); until then Windows may display an unknown-publisher warning for the unsigned download.
 
 Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vshvedov/rhun/releases/latest), extract it, and open `rhun.exe`. Keep `rhun.com` beside it for terminal use. For a Start menu shortcut and a terminal command, paste this into PowerShell:
 
@@ -232,6 +232,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager
 The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, `-NoUrlScheme` (no `rhun://file/` links), and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
 
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
+
+From 0.19.0 rhun is also in winget, as `rhun.rhun`:
+
+```powershell
+winget install rhun.rhun
+```
+
+winget puts rhun's folder on your user PATH, so `rhun` works in a new terminal, but it adds no Start menu shortcut, file associations or `rhun://` links. Update it with `winget upgrade rhun.rhun` after closing rhun: a rhun that winget installed still checks for new versions and shows **Update to X**, but leaves replacing itself to winget, which would otherwise lose track of the version. `winget uninstall rhun.rhun` removes it.
 
 Installation registers text, source, configuration and supported image extensions in Open With and
 Default Apps for the current user. It prints a command you can run manually to open Windows Settings

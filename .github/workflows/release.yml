@@ -246,3 +246,30 @@ jobs:
           # shellcheck disable=SC2086 # pre is empty or one flag
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "rhun $v" --notes-file notes.md $pre dist/*
           gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  # winget (docs/windows-signing.md): a pull request to microsoft/winget-pkgs for each release,
+  # from WINGET_TOKEN's fork of it (a classic token with public_repo). Prereleases stay off winget.
+  winget:
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submit to winget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::notice::WINGET_TOKEN is not set: nothing submitted to winget"
+            exit 0
+          fi
+          v=$(cat VERSION)
+          # the published ZIP, so the manifest's hash is the download's
+          gh release download "$GITHUB_REF_NAME" --pattern "rhun-$v-windows-x86_64.zip" --dir build
+          manifests=$(python3 tools/winget-manifests.py "build/rhun-$v-windows-x86_64.zip" build/winget)
+          cat "$manifests"/*.yaml
+          curl -fsSL -o build/komac.tar.gz https://github.com/russellbanks/Komac/releases/download/v2.17.1/komac-2.17.1-x86_64-unknown-linux-gnu.tar.gz
+          echo 'e694e79cd451afabf47bead66ed34586fef4814f7b94e4b61a098f419978d5d7  build/komac.tar.gz' | sha256sum -c -
+          tar -xzf build/komac.tar.gz -C build komac
+          GITHUB_TOKEN=$WINGET_TOKEN build/komac submit "$manifests" --yes

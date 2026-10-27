@@ -1,4 +1,4 @@
-# Windows signing and Defender
+# Windows signing, Defender and winget
 
 [Issue 28](https://github.com/vshvedov/rhun/issues/28): Microsoft Defender on Windows 11 has
 quarantined official `rhun.com` downloads as `Trojan:Win32/Wacatac.C!ml` (0.16.6) and
@@ -44,14 +44,34 @@ Setup, once:
 The version resource that `tools/build-windows.py` adds to both executables supplies that product
 name and version. Explorer and Defender's reports show it too.
 
+## winget
+
+After publishing a release without a dash in its version, the release workflow's `winget` job
+writes the manifests of `rhun.rhun` (`tools/winget-manifests.py`, from the published ZIP) and opens
+a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) with
+[Komac](https://github.com/russellbanks/Komac). Microsoft's pipeline validates it, installs it and
+scans it with Defender before it merges, which is one more look by Microsoft at each release.
+The first version also waits for a moderator. Without the secret the job only says so.
+
+winget installs the ZIP as a portable package and puts its `rhun-VERSION` folder on PATH
+(`ArchiveBinariesDependOnPath`): `rhun.com` starts `rhun.exe` from its own folder, which a
+symlink in winget's Links folder would hide. A rhun under a `WinGet/Packages` folder offers updates
+but leaves installing them to `winget upgrade`. `tests/winget-install.py` installs the build with
+real winget in the Windows workflow.
+
+Setup, once: fork microsoft/winget-pkgs to your account, and add the secret `WINGET_TOKEN`, a
+classic personal access token of that account with the `public_repo` scope.
+
 ## Each release
 
 1. Approve the signing request in SignPath when the release workflow waits for it.
-2. Submit the new `rhun.com` and `rhun.exe` at
+2. Follow the winget pull request the release opened until it merges; a failed validation is
+   labelled on it.
+3. Submit the new `rhun.com` and `rhun.exe` at
    [Microsoft Security Intelligence](https://www.microsoft.com/en-us/wdsi/filesubmission) as a
    software developer, with "incorrect detection" if someone has reported one. Note the
    submission ID in the issue. Microsoft's verdict also clears the file for other Defender users.
-3. When a user reports a detection, ask for the detection name, the Defender security
+4. When a user reports a detection, ask for the detection name, the Defender security
    intelligence version (`Get-MpComputerStatus`) and the file's SHA-256. Compare the hash with the
    release's before anything else.
 

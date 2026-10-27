@@ -62,6 +62,21 @@ jobs:
       - name: Updater tests
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         run: python tests/windows-update.py
+      # Hosted images have no winget; Microsoft's WinGet.Client module installs it
+      - name: winget
+        id: winget
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers
+          Repair-WinGetPackageManager -AllUsers -Latest -Force
+          winget --version
+          winget settings --enable LocalManifestFiles
+      - name: winget package
+        if: ${{ !cancelled() && steps.winget.outcome == 'success' }}
+        run: python tests/winget-install.py
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
