@@ -161,11 +161,31 @@ def main():
     version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip().split('-')[0]
     manifest.write_text(re.sub(r'version="0\.16\.0\.0"', f'version="{version}.0"',
                                (ROOT / 'assets/windows/rhun.manifest').read_text(encoding='utf-8')), encoding='utf-8')
-    resource = OUT / 'rhun.rc'
-    resource.write_text(f'1 24 "{manifest.as_posix()}"\n1 ICON "{icon.as_posix()}"\n', encoding='utf-8')
-    res = OUT / 'rhun.res'
-    # Relative paths avoid llvm-rc interpreting a POSIX absolute path as a /flag.
-    run([rc, '/no-preprocess', '/C', '65001', '/fo', res.relative_to(ROOT), resource.relative_to(ROOT)])
+    # Version information names the program in Explorer, Task Manager and antivirus reports; code
+    # signing (docs/windows-signing.md) requires the product name on every signed file.
+    numbers = ','.join((version.split('.') + ['0'] * 4)[:4])
+    full_version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+    copyright_line = next(line for line in (ROOT / 'LICENSE').read_text(encoding='utf-8').splitlines()
+                          if line.startswith('Copyright'))
+    def resources(name):
+        strings = {'FileDescription': 'rhun', 'FileVersion': full_version, 'InternalName': 'rhun',
+                   'LegalCopyright': copyright_line + '. MIT License.', 'OriginalFilename': name,
+                   'ProductName': 'rhun', 'ProductVersion': full_version}
+        values = ''.join(f'      VALUE "{key}", "{value}"\n' for key, value in strings.items())
+        return (f'1 24 "{manifest.as_posix()}"\n1 ICON "{icon.as_posix()}"\n'
+                f'1 VERSIONINFO\nFILEVERSION {numbers}\nPRODUCTVERSION {numbers}\n'
+                # VOS_NT_WINDOWS32, VFT_APP
+                'FILEOS 0x40004\nFILETYPE 0x1\nBEGIN\n  BLOCK "StringFileInfo"\n  BEGIN\n'
+                f'    BLOCK "040904B0"\n    BEGIN\n{values}    END\n  END\n'
+                '  BLOCK "VarFileInfo"\n  BEGIN\n    VALUE "Translation", 0x409, 1200\n  END\nEND\n')
+    res = {}
+    # rhun.res (rhun.com's) also goes into test programs, tests/faults included
+    for name, stem in (('rhun.exe', 'rhun-exe'), ('rhun.com', 'rhun')):
+        resource = OUT / (stem + '.rc')
+        resource.write_text(resources(name), encoding='utf-8')
+        res[name] = resource.with_suffix('.res')
+        # Relative paths avoid llvm-rc interpreting a POSIX absolute path as a /flag.
+        run([rc, '/no-preprocess', '/C', '65001', '/fo', res[name].relative_to(ROOT), resource.relative_to(ROOT)])
     exclude = {'src/start.s', 'src/plat/wayland.s', 'src/plat/x11.s', 'src/plat/appearance.s'}
     sources = [p for p in sorted((ROOT / 'src').rglob('*.s'))
                if 'mac' not in p.relative_to(ROOT).parts and p.relative_to(ROOT).as_posix() not in exclude]
@@ -216,7 +236,7 @@ def main():
         # Commit the full stack up front; runtime workers do not call shared editor code.
         run([link, '/nodefaultlib', '/entry:win_start', f'/subsystem:{subsystem},6.02',
              '/stack:33554432,33554432', '/dynamicbase', '/nxcompat', '/largeaddressaware',
-             f'/out:{path}', f'/map:{path}.map', *objs, res, *libraries])
+             f'/out:{path}', f'/map:{path}.map', *objs, res.get(path.name, res['rhun.com']), *libraries])
 
     executable(OUT / 'rhun.exe', objects, 'windows')
     executable(OUT / 'rhun.com', objects, 'console')
