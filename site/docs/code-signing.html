@@ -1,0 +1,22 @@
+<section id="signing">
+<h2>Windows releases</h2>
+<p>Free code signing provided by <a href="https://signpath.io">SignPath.io</a>, certificate by <a href="https://signpath.org">SignPath Foundation</a>.</p>
+<p>The signed files are <code>rhun.exe</code> and <code>rhun.com</code> in the Windows ZIP of each <a href="https://github.com/vshvedov/rhun/releases">release</a>. The <a href="https://github.com/vshvedov/rhun/blob/main/.github/workflows/release.yml">release workflow</a> builds them from the release’s tag in <a href="https://github.com/vshvedov/rhun">vshvedov/rhun</a> on GitHub-hosted runners, tests them, and submits them for signing. A person approves every signing request. rhun’s signature covers nothing else: extensions, their language servers, and the programs rhun starts are signed by their own authors, if at all.</p>
+<p>Signing starts with the first release after SignPath Foundation accepts rhun; earlier Windows releases are unsigned. Every release’s ZIP SHA-256 is in its <code>SHA256SUMS</code>, and the installer and updater check it.</p>
+</section>
+<section id="team">
+<h2>Team roles</h2>
+<ul>
+<li>Committers and reviewers: <a href="https://github.com/vshvedov">Vlad Shvedov</a>. Changes from anyone else arrive as pull requests and are reviewed before they are merged.</li>
+<li>Approvers: <a href="https://github.com/vshvedov">Vlad Shvedov</a>.</li>
+</ul>
+</section>
+<section id="privacy">
+<h2>Privacy</h2>
+<p>rhun has no telemetry and no accounts. On its own it contacts only GitHub:</p>
+<ul>
+<li>Release builds check <code>github.com</code> for a new rhun version a few seconds after starting and once a day. Turn this off with <strong>Check for updates</strong> in Settings (<code>check = false</code> under <code>[updates]</code>).</li>
+<li>When you have extensions installed, rhun checks GitHub for their updates a minute after starting and once a day. <code>[updates] extensions</code> decides what happens to them.</li>
+</ul>
+<p>Everything else that uses the network happens only when you ask for it: installing an extension, a remote window, Git commands, and commit-message drafts, which send the diff to the provider you chose. Each one is described in the <a href="/docs/">guides</a>. Programs you run in rhun’s terminal, and extensions within the permissions they declare, use the network on their own terms.</p>
+</section>

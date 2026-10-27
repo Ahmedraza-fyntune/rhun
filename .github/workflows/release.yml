@@ -145,6 +145,48 @@ jobs:
         run: python tools/build-windows.py test
       - name: Native tests
         run: python tests/windows.py
+      # SignPath signs both executables once SIGNPATH_ORGANIZATION_ID is set (docs/windows-signing.md);
+      # the release waits for its manual approval there, and everything after ships the signed files.
+      - name: Version
+        id: version
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: Add-Content $env:GITHUB_OUTPUT "version=$((Get-Content VERSION -Raw).Trim())"
+      - name: Unsigned executables
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: |
+            build/windows/rhun.exe
+            build/windows/rhun.com
+          if-no-files-found: error
+      - name: Sign
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: rhun
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-executables
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: build/signed
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+      - name: Signed executables
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          foreach ($name in 'rhun.exe', 'rhun.com') {
+            $signature = Get-AuthenticodeSignature -LiteralPath "build/signed/$name"
+            if ($signature.Status -ne 'Valid') { throw "$name is not validly signed: $($signature.StatusMessage)" }
+            Write-Output "$name signed by $($signature.SignerCertificate.Subject)"
+            Copy-Item -LiteralPath "build/signed/$name" -Destination build/windows -Force
+          }
       - name: Package
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -185,9 +227,14 @@ jobs:
           cat VERSION > dist/VERSION
           (cd dist && sha256sum rhun-* > SHA256SUMS && cat SHA256SUMS)
       - name: Release notes
+        env:
+          SIGNED: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
         run: |
           prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
           git log --no-merges --format='- %s' ${prev:+"$prev.."}"$GITHUB_REF_NAME" > notes.md
+          if [ "$SIGNED" = true ]; then
+            printf '\nWindows: free code signing provided by SignPath.io, certificate by SignPath Foundation. [Code signing policy](https://rhun.app/code-signing/)\n' >> notes.md
+          fi
           cat notes.md
       - name: Publish
         env:
