@@ -134,8 +134,9 @@ for raw in sys.stdin.buffer:
         self.assertIn('error 101 refused ',self.source_log())
 
     def test_cancel_rejects_late_intermediate_and_does_not_write(self):
-        root=self.providers(mode='late',delay=.5)
-        self.run_editor(['type y','cmd save','wait 100','cmd cancel_save','wait 800'],exts=root)
+        root=self.providers(mode='late',delay=.5,timeout=15000)
+        self.run_editor(['type y','cmd save','wait-ext source running','wait 0',
+                         'cmd cancel_save','wait 800'],exts=root)
         self.assertEqual(self.saved(),'hello world\nsecond line\n')
         self.assertIn('0 cancel ',self.source_log())
         self.assertIn('error 101 refused ',self.source_log())

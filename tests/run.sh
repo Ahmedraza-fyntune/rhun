@@ -86,6 +86,7 @@ check memmove build/memmove_test
 python3 tests/mem-try.py || fail=1
 python3 tests/mem-helpers.py || fail=1
 check syntax build/syntax_test
+check syntax-word build/grammar_test --try tests/data/region-word.syn tests/data/region-word.txt
 check themes build/theme_test
 check term build/term_test
 check diff build/diff_test
@@ -147,6 +148,7 @@ sh tests/detach.sh || fail=1
 sh tests/blink.sh || fail=1
 python3 tests/field-blink.py || fail=1
 sh tests/session.sh || fail=1
+python3 tests/window-state.py || fail=1
 python3 tests/desktop-ux.py || fail=1
 python3 tests/mac-launch.py || fail=1
 python3 tests/x11-auth.py || fail=1

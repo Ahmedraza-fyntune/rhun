@@ -410,6 +410,57 @@ let main argv =
 4444444 0
     0
 00005 0
+== genotype.syn
+//! Shared data types.
+6666666666666666666666 0
+use ./coordinates/*
+aaaaaaaaaaaaaaaaaaa 0
+Coordinate: float
+22222222228022222 0
+  use ./address/{Address as PostalAddress} // import comment
+00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
+Address: string
+222222280222222 0
+use ./other/* /* import-line comments share its color
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0
+continued import comment */
+000000000000000000000000088 0
+AfterImport: boolean
+22222222222802222222 0
+user: string
+000080222222 0
+useful: int
+00000080222 0
+/// A branded identifier.
+6666666666666666666666666 0
+UserId: @u64
+22222280dddd 0
+#[ts(alias)]
+093390000099 0
+User<Payload>: {
+2222822222228809 0
+    id: UserId, name: string, address?: PostalAddress,
+000000802222229000008022222290000000088022222222222229 0
+    tags: [string], payload: Payload | null,
+00000000809222222990000000080222222208077779 0
+    active: true, disabled: false, count: 64_000,
+0000000000807777900000000080777779000000805555559 0
+    ratio: -1.5e+2, note: "bracket ] and \"quote\" // text",
+000000000808555555900000804444444444444444444444444444444449 0
+}
+9 0
+Choice: "yes" | "no" | null
+222222804444408044440807777 0
+Pair: (string, boolean)
+22228092222229022222229 0
+Index: { [UserId]: User<Payload> }
+2222280909222222980222282222222809 0
+/* Block comment
+6666666666666666 3
+   continued */
+666666666666666 0
+AfterComment: number
+22222222222280222222 0
 == gitattributes.syn
 # normalize line endings
 666666666666666666666666 0
@@ -1368,7 +1419,7 @@ endif
 11111 0
 call Greet('World')
 1111033333944444449 0
-checked 127 grammars
+checked 128 grammars
 Makefile -> Makefile (parsed 1)
 a.py -> Python (parsed 2)
 b.py -> Python (parsed 2)
@@ -1467,3 +1518,6 @@ x.sh -> Shell (parsed 84)
 main.v -> V (parsed 85)
 build.vsh -> V (parsed 85)
 v.mod -> V (parsed 85)
+model.type -> Genotype (parsed 86)
+genotype.toml -> TOML (parsed 87)
+model.type.bak -> plain (parsed 87)

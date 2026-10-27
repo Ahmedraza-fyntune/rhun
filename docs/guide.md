@@ -221,7 +221,7 @@ tools/package-mac.sh   # build/rhun-VERSION-macos-arm64.zip and .dmg
 
 ### Windows
 
-The Windows build targets Windows 10 version 1809 or later and Windows 11, on x64. Native ARM64 and Windows code signing are not included in 0.16.0. Windows may display an unknown-publisher warning for the unsigned download.
+The Windows build targets Windows 10 version 1809 or later and Windows 11, on x64. Native ARM64 is not included. Releases are signed once SignPath Foundation accepts rhun (see the [code signing policy](https://rhun.app/code-signing/)); until then Windows may display an unknown-publisher warning for the unsigned download.
 
 Download `rhun-VERSION-windows-x86_64.zip` from [Releases](https://github.com/vshvedov/rhun/releases/latest), extract it, and open `rhun.exe`. Keep `rhun.com` beside it for terminal use. For a Start menu shortcut and a terminal command, paste this into PowerShell:
 
@@ -232,6 +232,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager
 The installer verifies SHA-256, installs under `%LOCALAPPDATA%\Programs\rhun`, adds a Start menu shortcut and updates your user PATH. Open a new terminal after installation. Options are `-Version X`, `-InstallDir DIR`, `-NoModifyPath`, `-NoShortcut`, `-NoUrlScheme` (no `rhun://file/` links), and `-Uninstall`. It refuses to replace a running editor or a directory containing unrelated files. Use the status bar to download an update and restart into it, or close rhun and rerun the installer. Automatic checks are enabled for release builds, with installation and restart initiated by you. Uninstalling keeps settings and sessions.
 
 The script is also included in the ZIP. To install from a downloaded script, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`. No administrator access or package manager is needed.
+
+From 0.19.0 rhun is also in winget, as `rhun.rhun`:
+
+```powershell
+winget install rhun.rhun
+```
+
+winget puts rhun's folder on your user PATH, so `rhun` works in a new terminal, but it adds no Start menu shortcut, file associations or `rhun://` links. Update it with `winget upgrade rhun.rhun` after closing rhun: a rhun that winget installed still checks for new versions and shows **Update to X**, but leaves replacing itself to winget, which would otherwise lose track of the version. `winget uninstall rhun.rhun` removes it.
 
 Installation registers text, source, configuration and supported image extensions in Open With and
 Default Apps for the current user. It prints a command you can run manually to open Windows Settings
@@ -310,6 +318,10 @@ Settings includes links to [rhun.app](https://rhun.app), [hi@rhun.app](mailto:hi
 Started from a terminal, rhun goes on by itself: the prompt comes back at once, and closing the terminal leaves rhun open. `rhun --wait` stays until rhun is closed, which is what programs that wait for an editor need, such as git: `export EDITOR="rhun --wait"`, which the installer's default-editor command sets for you.
 
 rhun uses Wayland when it can and falls back to X11 when there is no Wayland compositor. `RHUN_BACKEND=x11` or `RHUN_BACKEND=wayland` picks one.
+
+Windows and X11 remember the last closed window's normal position, size and maximized state. X11 keeps the most recent normal bounds it can confirm; queued window-manager state changes while the editor is busy can leave earlier normal bounds. Wayland remembers its normal size and requests the saved maximized state; the compositor controls placement and may override those requests. On Wayland, tiled and fullscreen sizes do not replace the normal size.
+
+Minimized windows reopen visible. Window placement is independent of restoring project tabs, and headless runs do not change it. macOS keeps its existing system frame autosaving.
 
 The mouse pointer is the desktop's: the compositor draws it when it supports the cursor-shape protocol; otherwise rhun loads your Xcursor theme (`XCURSOR_THEME`, `XCURSOR_SIZE`, `~/.icons/default`, `/usr/share/icons/default`).
 
@@ -706,7 +718,7 @@ Paste waits for clipboard data without changing its destination. If the original
 
 ### Themes
 
-The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+T), which saves the theme for the mode the system is in. Turn off **Follow system dark mode** (`follow_system = false`) to keep one theme, `theme`, whatever the system does; it starts as the theme on screen. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
+The theme follows the system's dark mode: `dark_theme` shows while the system is in dark mode and `light_theme` while it is in light mode, Rhun Dark and Rhun Light to start with. Pick them in Settings > Appearance, or with the theme picker (Ctrl+K Ctrl+T), which saves the theme for the mode the system is in. Confirming a theme for the other mode keeps that choice on screen by turning off **Follow system dark mode** and saving it as the fixed `theme`. Turn **Follow system dark mode** back on to resume automatic switching. You can also turn it off yourself (`follow_system = false`) to keep the theme on screen whatever the system does. **Toggle Light/Dark Theme** in the command palette then switches `theme` between the dark and the light one.
 
 rhun reads the mode as VS Code does and switches as soon as the system does:
 
@@ -748,7 +760,9 @@ On Omarchy the theme list starts with Follow Omarchy (`omarchy`): rhun uses the 
 
 ### Languages
 
-Built-in languages: Ada, Apache, AppleScript, AsciiDoc, Assembly, Astro, AWK, Batch, BibTeX, Blade, C, C#, C++, Cap'n Proto, Clojure, CMake, COBOL, Crontab, Crystal, CSS, CUDA, CUE, D, Dart, Dhall, Diff, Dockerfile, dotenv, EJS, Elixir, Elm, ERB, Erlang, F#, Fish, Fortran, Git attributes, Git Commit, Gleam, GLSL, Go, GraphQL, Graphviz, Groovy, HAML, Handlebars, Haskell, Haxe, HCL, HTML, HTTP, Idris, Ignore, INI, Janet, Java, JavaScript, Jinja, JSON, Jsonnet, Julia, Just, KDL, Kotlin, LaTeX, Lean, Liquid, Lua, Makefile, Markdown, MATLAB, Mermaid, Meson, Mojo, Nginx, Nim, Ninja, Nix, Objective-C, OCaml, Odin, Org, Pascal, Perl, PHP, Pkl, PlantUML, PowerShell, Prisma, Prolog, Properties, Protocol Buffers, Pug, Puppet, PureScript, Python, R, Raku, Razor, Rego, reStructuredText, RON, Ruby, Rust, Scala, Shell, Slim, Solidity, SQL, SSH config, Starlark, Swift, Tcl, Thrift, TOML, Twig, TypeScript, Typst, V, Vala, Verilog, VHDL, Vim script, Visual Basic, XML, YAML, Zig.
+Built-in languages: Ada, Apache, AppleScript, AsciiDoc, Assembly, Astro, AWK, Batch, BibTeX, Blade, C, C#, C++, Cap'n Proto, Clojure, CMake, COBOL, Crontab, Crystal, CSS, CUDA, CUE, D, Dart, Dhall, Diff, Dockerfile, dotenv, EJS, Elixir, Elm, ERB, Erlang, F#, Fish, Fortran, Genotype, Git attributes, Git Commit, Gleam, GLSL, Go, GraphQL, Graphviz, Groovy, HAML, Handlebars, Haskell, Haxe, HCL, HTML, HTTP, Idris, Ignore, INI, Janet, Java, JavaScript, Jinja, JSON, Jsonnet, Julia, Just, KDL, Kotlin, LaTeX, Lean, Liquid, Lua, Makefile, Markdown, MATLAB, Mermaid, Meson, Mojo, Nginx, Nim, Ninja, Nix, Objective-C, OCaml, Odin, Org, Pascal, Perl, PHP, Pkl, PlantUML, PowerShell, Prisma, Prolog, Properties, Protocol Buffers, Pug, Puppet, PureScript, Python, R, Raku, Razor, Rego, reStructuredText, RON, Ruby, Rust, Scala, Shell, Slim, Solidity, SQL, SSH config, Starlark, Swift, Tcl, Thrift, TOML, Twig, TypeScript, Typst, V, Vala, Verilog, VHDL, Vim script, Visual Basic, XML, YAML, Zig.
+
+Genotype files (`.type`) have built-in highlighting and editing rules. Formatting uses the Genotype CLI (`gt` 0.18.0 or later) through `rhun-editor/format` 0.4.0 or later.
 
 A grammar is a `name.syn` file in `~/.config/rhun/syntax/`; your grammars win a tie with built-in ones.
 
@@ -775,7 +789,7 @@ captypes = yes
 case = insensitive
 ```
 
-`comment`, `block`, `string` and `mstring` are shorthands for `region = start end class [multiline] [bol] [escape=X]`. An escape that is the end itself is doubled: with `escape="`, `""` stands for one quote. Classes: text keyword type function string number comment constant operator punctuation preproc variable builtin attribute tag heading inserted deleted escape link. Words not in a list are colored as functions when followed by `(`, and with `captypes` as types when capitalized.
+`comment`, `block`, `string` and `mstring` are shorthands for `region = start end class [multiline] [bol] [word] [escape=X]`. `word` requires identifier boundaries on both sides of the opening token; `bol` limits it to the first non-blank token on a line. A line region has one color through its end, so Genotype import lines, including trailing comments, use the preprocessor color; a block comment started there does not carry to the following line. An escape that is the end itself is doubled: with `escape="`, `""` stands for one quote. Classes: text keyword type function string number comment constant operator punctuation preproc variable builtin attribute tag heading inserted deleted escape link. Words not in a list are colored as functions when followed by `(`, and with `captypes` as types when capitalized.
 
 `comment` also gives the token Toggle Comment adds in front of the selected lines. Where a comment counts only at a line's first non-blank, color it with a `bol` region and give the token with `toggle_comment`, which colors nothing itself (a `comment` would also color the token in the middle of a line). The first `comment` or `toggle_comment` sets the token.
 

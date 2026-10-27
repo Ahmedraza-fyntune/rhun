@@ -70,9 +70,10 @@ $textExtensions = @(
     'socket', 'sol', 'sql', 'ss', 'star', 'sty', 'sv', 'svelte', 'svg', 'svh',
     'swift', 'syn', 't', 'target', 'targets', 'tcl', 'tesc', 'tese', 'tex', 'text',
     'tf', 'tfvars', 'theme', 'thrift', 'timer', 'tk', 'toml', 'tpp', 'ts', 'tsx',
-    'twig', 'txt', 'typ', 'v', 'vala', 'vapi', 'vb', 'vbs', 'vcxproj', 'vert',
-    'vh', 'vhd', 'vhdl', 'vim', 'vsh', 'vue', 'webmanifest', 'wgsl', 'wsdl', 'xaml',
-    'xhtml', 'xml', 'xsd', 'xsl', 'xslt', 'yaml', 'yml', 'zig', 'zon', 'zsh'
+    'twig', 'txt', 'typ', 'type', 'v', 'vala', 'vapi', 'vb', 'vbs', 'vcxproj',
+    'vert', 'vh', 'vhd', 'vhdl', 'vim', 'vsh', 'vue', 'webmanifest', 'wgsl', 'wsdl',
+    'xaml', 'xhtml', 'xml', 'xsd', 'xsl', 'xslt', 'yaml', 'yml', 'zig', 'zon',
+    'zsh'
 )
 # END TEXT EXTENSIONS
 $imageExtensions = @('png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'cur', 'qoi', 'pbm', 'pgm', 'ppm', 'pnm', 'tga')

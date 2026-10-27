@@ -3068,8 +3068,16 @@ palette_accept:
     jmp .Lpa_close
 21: cmp ebx, PM_THEMES
     jne 3f
-    # saved in the list's setting; closing shows the theme the settings now choose
+    # Keep the confirmed choice on screen. Picking for the inactive system mode also makes it
+    # the fixed theme, otherwise closing would immediately replace it with the active mode's.
     mov rdi, [rip + pal_theme_slot]
+    mov rsi, [r12 + IT_data]
+    call theme_set
+    call theme_slot
+    cmp rax, [rip + pal_theme_slot]
+    je .Lpa_close
+    mov dword ptr [rip + cfg_follow_system], 0
+    lea rdi, [rip + cfg_theme]
     mov rsi, [r12 + IT_data]
     call theme_set
     jmp .Lpa_close

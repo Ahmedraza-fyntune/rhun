@@ -296,6 +296,46 @@ FN main
     call xp_text_check
     call xp_cleanup
 
+    # A reply arriving after Quit cannot deliver a paste while a native query finishes.
+    call xp_setup
+    call xp_notify
+    mov edi, 11
+    xor esi, esi
+    call xp_reply_make
+    lea rdi, [rip + xp_packet + 32]
+    lea rsi, [rip + xp_text]
+    mov edx, 11
+    call memcpy
+    mov dword ptr [rip + g_quit], 1
+    lea rdi, [rip + xp_packet]
+    mov esi, 44
+    call x_wire_message
+    call xp_assert_same
+    cmp dword ptr [rip + x_paste_record + XR_state], XR_PROPERTY
+    jne xp_fail
+    mov dword ptr [rip + g_quit], 0
+    call x_paste_cancel
+    call xp_cleanup
+
+    # Late native errors must not complete or advance a pending paste either.
+    call xp_setup
+    call xp_notify
+    xor edi, edi
+    xor esi, esi
+    call xp_reply_make
+    mov byte ptr [rip + xp_packet], 0
+    mov byte ptr [rip + xp_packet + 1], 3
+    mov dword ptr [rip + g_quit], 1
+    lea rdi, [rip + xp_packet]
+    mov esi, 32
+    call x_wire_message
+    call xp_assert_same
+    cmp dword ptr [rip + x_paste_record + XR_state], XR_PROPERTY
+    jne xp_fail
+    mov dword ptr [rip + g_quit], 0
+    call x_paste_cancel
+    call xp_cleanup
+
     # An accepted empty direct reply is observable but cannot touch document state.
     call xp_setup
     call xp_notify

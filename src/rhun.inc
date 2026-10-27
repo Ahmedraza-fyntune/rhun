@@ -447,6 +447,17 @@ F P_menu, 8             # (x, y)
 F P_clip_write, 8       # optional (native wire, len) -> accepted bool; zero for plain fallback
 ENDSTRUCT PLAT_SIZE
 
+# Last normal window bounds, in the native backend's coordinates. Maximized axes are bits 0/1.
+STRUCT
+F WPOS_magic, 4
+F WPOS_x, 4
+F WPOS_y, 4
+F WPOS_w, 4
+F WPOS_h, 4
+F WPOS_max, 4
+ENDSTRUCT WPOS_SIZE
+.equ WPOS_MAGIC, 0x31535752      # RWS1, little endian
+
 .equ EDGE_TOP, 1
 .equ EDGE_BOTTOM, 2
 .equ EDGE_LEFT, 4
@@ -1947,7 +1958,8 @@ F REG_class, 1
 F REG_esc, 1
 F REG_multi, 1
 F REG_bol, 1            # only at line start (after blanks)
-F REG_pad, 2
+F REG_word, 1           # opener has identifier boundaries on both sides
+F REG_pad, 1
 ENDSTRUCT REG_SIZE
 
 # prompt kinds (palette used as a one-line input)

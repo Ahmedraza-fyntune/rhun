@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The SignPath artifact configuration "windows-executables" (docs/windows-signing.md): the
+     release workflow's windows-unsigned artifact, both executables built from this repository. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="rhun" product-version="${version}">
+      <include path="rhun.exe" />
+      <include path="rhun.com" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

@@ -93,6 +93,18 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
         equal(run(exe + '.exe', *arguments, env=env).stdout,
               (ROOT / 'tests/data' / (name + '.expected')).read_bytes())
 
+    def version_info():
+        # SignPath signs only files whose product name and version are these (docs/windows-signing.md)
+        version = (ROOT / 'VERSION').read_text(encoding='utf-8').strip()
+        for exe in ('rhun.exe', 'rhun.com'):
+            info = subprocess.run(['powershell.exe', '-NoProfile', '-Command',
+                                   f"$v = (Get-Item -LiteralPath '{OUT / exe}').VersionInfo; "
+                                   '$v.ProductName; $v.ProductVersion; $v.OriginalFilename; $v.FileDescription'],
+                                  capture_output=True, text=True, check=True).stdout.split()
+            equal(info, ['rhun', version, exe, 'rhun'])
+
+    if not args.wine:
+        check('version-info', version_info)
     check('installer-unicode', lambda: subprocess.run([sys.executable, str(ROOT / 'tests/installer-unicode.py')], check=True))
     check('ext-settings-target', lambda: golden('ext-settings-target', 'ext_settings_target_test'))
     for driver in ('ext-flush', 'ext-pending-commands', 'ext-pending-owner'):
@@ -107,6 +119,11 @@ with tempfile.TemporaryDirectory(prefix='rhun-windows-', dir=OUT) as temporary:
          *(['--wine', args.wine] if args.wine else [])], check=True))
     check('doc-language', lambda: golden('doc-language', 'doc_language_test'))
     check('doc-language-choice', lambda: golden('doc-language-choice', 'doc_language_choice_test'))
+    if not args.wine:
+        check('window-state', lambda: subprocess.run(
+            [sys.executable, str(ROOT / 'tests/window-state.py')], check=True))
+    check('syntax-word', lambda: golden('syntax-word', 'grammar_test',
+          ('--try', 'tests/data/region-word.syn', 'tests/data/region-word.txt')))
     check('file-read-limited', lambda: subprocess.run(
         [sys.executable, str(ROOT / 'tests/file-read-limited.py'),
          '--exe', str(OUT / 'file_read_limited_test.exe'),

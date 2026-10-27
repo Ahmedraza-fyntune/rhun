@@ -74,20 +74,23 @@ class Scheduling(host.Host):
     def tearDownClass(cls):
         cls.fixture.cleanup()
 
-    def extensions(self, count, startup=True):
+    def extensions(self, count, startup=True, hello_delays=None):
+        hello_delays = hello_delays or {}
         root = self.work / 'scheduling'
         for i in range(count):
             name = f'p{i:03}'
             folder = root / 'scheduling' / name
             folder.mkdir(parents=True)
-            if self.binary:
+            if self.binary and i not in hello_delays:
                 target = folder / self.binary.name
                 shutil.copy2(self.binary, target)
                 runtime = ''.join(f'run.{platform} = {target.name}\n' for platform in
                                   ('linux-x86_64', 'linux-arm64', 'macos-arm64', 'windows-x64'))
             else:
                 target = folder / 'main.py'
-                target.write_text(FALLBACK)
+                delay = (f'import time\ntime.sleep({hello_delays[i]!r})\n'
+                         if i in hello_delays else '')
+                target.write_text(delay + FALLBACK)
                 runtime = f'run = {target.name}\nruntime = python3\n'
             (folder / 'extension.ini').write_text(
                 f'name = {name}\nowner = scheduling\ntitle = Peer {i}\nversion = 1\nprotocol = 1\n'
@@ -96,11 +99,14 @@ class Scheduling(host.Host):
                 '[needs]\ndocuments = write\n[provides]\nformat = *.go\n')
         return root
 
-    def all_slots_can_run(self):
-        count = 128 if self.binary else 64
-        root = self.extensions(count)
-        out = self.run_editor(exts=root, files=(), actions=[
-            'wait 2200', 'print-extensions', f'cmd scheduling/p{count - 1:03}.ping',
+    def all_slots_can_run(self, count=None, hello_delays=None):
+        if count is None:
+            count = 128 if self.binary else 64
+        root = self.extensions(count, hello_delays=hello_delays)
+        # Startup is paced across frames; each peer must finish its own handshake before the snapshot.
+        actions = [f'wait-ext scheduling/p{i:03} running' for i in range(count)]
+        out = self.run_editor(exts=root, files=(), actions=actions + [
+            'print-extensions', f'cmd scheduling/p{count - 1:03}.ping',
             'wait 600', 'print-toast'])
         rows = [x for x in out if x.startswith('scheduling/')]
         self.assertEqual(len(rows), count, out)
@@ -109,6 +115,17 @@ class Scheduling(host.Host):
 
     def test_all_extension_slots_can_handshake_and_handle_commands(self):
         self.all_slots_can_run()
+
+    def test_capacity_waits_for_a_delayed_first_handshake(self):
+        self.all_slots_can_run(hello_delays={0: 3})
+
+    def test_capacity_waits_for_a_delayed_last_handshake(self):
+        last = (128 if self.binary else 64) - 1
+        self.all_slots_can_run(hello_delays={last: 3})
+
+    def test_capacity_rejects_a_missing_handshake(self):
+        with self.assertRaisesRegex(AssertionError, 'no hello within 5 s'):
+            self.all_slots_can_run(count=3, hello_delays={1: 60})
 
     @unittest.skipIf(os.name == 'nt', 'POSIX descriptor limits')
     def test_all_slots_run_with_inherited_descriptor_limit_of_256(self):

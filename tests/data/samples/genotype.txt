@@ -1,0 +1,25 @@
+//! Shared data types.
+use ./coordinates/*
+Coordinate: float
+  use ./address/{Address as PostalAddress} // import comment
+Address: string
+use ./other/* /* import-line comments share its color
+continued import comment */
+AfterImport: boolean
+user: string
+useful: int
+/// A branded identifier.
+UserId: @u64
+#[ts(alias)]
+User<Payload>: {
+    id: UserId, name: string, address?: PostalAddress,
+    tags: [string], payload: Payload | null,
+    active: true, disabled: false, count: 64_000,
+    ratio: -1.5e+2, note: "bracket ] and \"quote\" // text",
+}
+Choice: "yes" | "no" | null
+Pair: (string, boolean)
+Index: { [UserId]: User<Payload> }
+/* Block comment
+   continued */
+AfterComment: number

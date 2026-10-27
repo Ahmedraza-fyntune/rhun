@@ -145,6 +145,48 @@ jobs:
         run: python tools/build-windows.py test
       - name: Native tests
         run: python tests/windows.py
+      # SignPath signs both executables once SIGNPATH_ORGANIZATION_ID is set (docs/windows-signing.md);
+      # the release waits for its manual approval there, and everything after ships the signed files.
+      - name: Version
+        id: version
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: Add-Content $env:GITHUB_OUTPUT "version=$((Get-Content VERSION -Raw).Trim())"
+      - name: Unsigned executables
+        id: unsigned
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: |
+            build/windows/rhun.exe
+            build/windows/rhun.com
+          if-no-files-found: error
+      - name: Sign
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: rhun
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: windows-executables
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: build/signed
+          parameters: |
+            version: ${{ toJSON(steps.version.outputs.version) }}
+      - name: Signed executables
+        if: vars.SIGNPATH_ORGANIZATION_ID != ''
+        shell: pwsh
+        run: |
+          foreach ($name in 'rhun.exe', 'rhun.com') {
+            $signature = Get-AuthenticodeSignature -LiteralPath "build/signed/$name"
+            if ($signature.Status -ne 'Valid') { throw "$name is not validly signed: $($signature.StatusMessage)" }
+            Write-Output "$name signed by $($signature.SignerCertificate.Subject)"
+            Copy-Item -LiteralPath "build/signed/$name" -Destination build/windows -Force
+          }
       - name: Package
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -185,9 +227,14 @@ jobs:
           cat VERSION > dist/VERSION
           (cd dist && sha256sum rhun-* > SHA256SUMS && cat SHA256SUMS)
       - name: Release notes
+        env:
+          SIGNED: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
         run: |
           prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)
           git log --no-merges --format='- %s' ${prev:+"$prev.."}"$GITHUB_REF_NAME" > notes.md
+          if [ "$SIGNED" = true ]; then
+            printf '\nWindows: free code signing provided by SignPath.io, certificate by SignPath Foundation. [Code signing policy](https://rhun.app/code-signing/)\n' >> notes.md
+          fi
           cat notes.md
       - name: Publish
         env:
@@ -199,3 +246,30 @@ jobs:
           # shellcheck disable=SC2086 # pre is empty or one flag
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "rhun $v" --notes-file notes.md $pre dist/*
           gh release edit "$GITHUB_REF_NAME" --draft=false
+
+  # winget (docs/windows-signing.md): a pull request to microsoft/winget-pkgs for each release,
+  # from WINGET_TOKEN's fork of it (a classic token with public_repo). Prereleases stay off winget.
+  winget:
+    needs: publish
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Submit to winget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if [ -z "$WINGET_TOKEN" ]; then
+            echo "::notice::WINGET_TOKEN is not set: nothing submitted to winget"
+            exit 0
+          fi
+          v=$(cat VERSION)
+          # the published ZIP, so the manifest's hash is the download's
+          gh release download "$GITHUB_REF_NAME" --pattern "rhun-$v-windows-x86_64.zip" --dir build
+          manifests=$(python3 tools/winget-manifests.py "build/rhun-$v-windows-x86_64.zip" build/winget)
+          cat "$manifests"/*.yaml
+          curl -fsSL -o build/komac.tar.gz https://github.com/russellbanks/Komac/releases/download/v2.17.1/komac-2.17.1-x86_64-unknown-linux-gnu.tar.gz
+          echo 'e694e79cd451afabf47bead66ed34586fef4814f7b94e4b61a098f419978d5d7  build/komac.tar.gz' | sha256sum -c -
+          tar -xzf build/komac.tar.gz -C build komac
+          GITHUB_TOKEN=$WINGET_TOKEN build/komac submit "$manifests" --yes

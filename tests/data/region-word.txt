@@ -1,0 +1,12 @@
+use
+use target
+  use target
+reuse target
+user: string
+useful: int
+use-target
+-use target
+x.use target
+passwords: text
+wording: text
+iffy: text

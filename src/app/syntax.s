@@ -226,7 +226,7 @@ copy_token:
     pop rax
     ret
 
-# add_region(gr, start, slen, end, elen, class, flags(esc | multi<<8 | bol<<9))
+# add_region(gr, start, slen, end, elen, class, flags(esc | multi<<8 | bol<<9 | word<<10))
 add_region:
     PROLOGUE 16
     mov rbx, rdi
@@ -262,8 +262,12 @@ add_region:
     and edx, 1
     mov [rcx + REG_multi], dl
     shr eax, 1
+    mov edx, eax
+    and edx, 1
+    mov [rcx + REG_bol], dl
+    shr eax, 1
     and eax, 1
-    mov [rcx + REG_bol], al
+    mov [rcx + REG_word], al
     EPILOGUE
 
 # grammar_parse(text, len) -> GR*
@@ -547,7 +551,7 @@ FN grammar_fill
     add rsp, 16
     jmp .Lgp_next
 .Lgp_region:
-    # region = start end class [multiline] [bol] [escape=X]
+    # region = start end class [multiline] [bol] [word] [escape=X]
     call .Lgp_words3
     mov rdi, [rsp + 32]
     mov rsi, [rsp + 40]
@@ -592,6 +596,29 @@ FN grammar_fill
     movzx eax, byte ptr [r14 + rax]
     or ecx, eax
 8:  mov [rsp + 56], ecx
+    # word is an exact flag after the class, never part of the opener, end or class name
+    mov rax, [rsp + 32]
+    add rax, [rsp + 40]
+    mov [rsp + 64], rax
+    lea rcx, [r14 + r15]
+    sub rcx, rax
+    mov [rsp + 72], rcx
+.Lgp_region_word:
+    mov rdi, [rsp + 64]
+    mov rsi, [rsp + 72]
+    call next_word
+    add [rsp + 64], rcx
+    sub [rsp + 72], rcx
+    test rdx, rdx
+    jz .Lgp_region_flags_done
+    mov rdi, rax
+    mov rsi, rdx
+    lea rdx, [rip + .Lv_word]
+    call str_eq_cstr
+    test eax, eax
+    jz .Lgp_region_word
+    or dword ptr [rsp + 56], 0x400
+.Lgp_region_flags_done:
     # "eol" as end means end of line
     mov rdi, [rsp + 16]
     mov rsi, [rsp + 24]
@@ -1167,7 +1194,15 @@ FN tokenize
     jne 51f
     cmp dword ptr [rip + tk_intag], 0
     je 6f
-51: push rcx
+51: cmp byte ptr [r15 + REG_word], 0
+    je .Ltk_region_start
+    test rsi, rsi
+    jz .Ltk_region_start
+    movzx eax, byte ptr [r12 + rsi - 1]
+    cmp byte ptr [rbx + GR_wchar + rax], 0
+    jne 6f
+.Ltk_region_start:
+    push rcx
     push rsi
     lea rdi, [r12 + rsi]
     mov rax, r13
@@ -1179,7 +1214,16 @@ FN tokenize
     pop rsi
     pop rcx
     test eax, eax
-    jnz 7f
+    jz 6f
+    cmp byte ptr [r15 + REG_word], 0
+    je 7f
+    movzx eax, byte ptr [r15 + REG_slen]
+    add rax, rsi
+    cmp rax, r13
+    jae 7f
+    movzx eax, byte ptr [r12 + rax]
+    cmp byte ptr [rbx + GR_wchar + rax], 0
+    je 7f
 6:  inc rcx
     jmp .Ltk_reg
 7:  movzx eax, byte ptr [r15 + REG_slen]
@@ -1727,6 +1771,7 @@ class_names:
 .Lv_insensitive: .asciz "insensitive"
 .Lv_multiline: .ascii "multiline"
 .Lv_bol: .ascii "bol"
+.Lv_word: .asciz "word"
 .Lv_escape: .ascii "escape="
 .Lv_eol: .asciz "eol"
 .Lsyntax_dir: .asciz "syntax"
