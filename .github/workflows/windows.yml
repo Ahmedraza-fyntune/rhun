@@ -38,6 +38,11 @@ jobs:
       - name: Window placement across restarts
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python tests/windows-window-state.py
+      - name: Extension startup and scheduling
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          RHUN_TEST_EXE: build/windows/rhun.com
+        run: python tests/ext-scheduling.py -v
       - name: Native tests
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
