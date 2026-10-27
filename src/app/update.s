@@ -157,7 +157,8 @@ FN update_busy
     mov eax, 1
 1:  ret
 
-# update_installable() -> 1 when this rhun may replace itself: a release build, or a test's target
+# update_installable() -> 1 when this rhun may replace itself: a release build, or a test's target,
+# that winget did not install
 FN update_installable
     push rbx
     lea rdi, [rip + .Lenv_target]
@@ -165,11 +166,53 @@ FN update_installable
     test rax, rax
     jnz 1f
     mov eax, [rip + rhun_dist]
-    pop rbx
+    test eax, eax
+    jz 9f
+1:  call up_winget
+    xor eax, 1
+9:  pop rbx
     ret
-1:  mov eax, 1
-    pop rbx
+
+# up_winget() -> 1 when winget installed the rhun to update (a portable package under
+# WinGet\Packages): winget upgrade replaces it, as rhun replacing itself would leave winget's
+# record of the version behind
+up_winget:
+.ifdef WINDOWS
+    PROLOGUE
+    call update_target
+    test rax, rax
+    jz 7f
+    mov rbx, rax
+    mov rdi, rax
+    call strlen
+    mov r12, rax
+    # the running rhun's path has / (ws_readlink), a test's target can have \ too
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lwinget_dir]
+    mov ecx, 17                 # "/WinGet/Packages/"
+    call str_ifind
+    test rax, rax
+    jns 6f
+    mov rdi, rbx
+    mov rsi, r12
+    lea rdx, [rip + .Lwinget_dir_bs]
+    mov ecx, 17
+    call str_ifind
+    test rax, rax
+    jns 6f
+    xor eax, eax
+    EPILOGUE
+6:  mov eax, 1
+    EPILOGUE
+    # no target: not winget's, and not a failed check either
+7:  mov byte ptr [rip + up_error], 0
+    xor eax, eax
+    EPILOGUE
+.else
+    xor eax, eax
     ret
+.endif
 
 # up_auto_allowed() -> 1 when automatic checks may run: the setting is on, and this is a release
 # build with a window (or a test names a target)
@@ -389,11 +432,15 @@ up_decide:
     call update_installable
     test eax, eax
     jz 4f
-    cmp dword ptr [rip + g_update_state], UP_INSTALLING
+3:  cmp dword ptr [rip + g_update_state], UP_INSTALLING
     jae 9f
     mov dword ptr [rip + g_update_state], UP_AVAILABLE
     jmp 9f
-4:  cmp dword ptr [rip + up_manual], 0
+    # winget's: the status bar offers it all the same, and installing it names the winget command
+4:  call up_winget
+    test eax, eax
+    jnz 3b
+    cmp dword ptr [rip + up_manual], 0
     je 9f
     lea rdi, [rip + .Lt_rhun]
     lea rsi, [rip + up_latest]
@@ -746,9 +793,17 @@ FN cmd_install_update
     call update_installable
     test eax, eax
     jnz 1f
+    call up_winget
+    test eax, eax
+    jnz 2f
     lea rdi, [rip + .Lt_source]
     xor esi, esi
     xor edx, edx
+    call up_toast
+    jmp 9f
+2:  lea rdi, [rip + .Lt_rhun]
+    lea rsi, [rip + up_latest]
+    lea rdx, [rip + .Lt_winget]
     call up_toast
     jmp 9f
 1:  call update_target
@@ -1232,6 +1287,9 @@ ver_fields:
 .Lt_rhun: .asciz "rh\303\273n "
 .Lt_latest: .asciz " is the latest"
 .Lt_rebuild: .asciz " is available; pull and rebuild to update"
+.Lt_winget: .asciz " is available; update with winget upgrade rhun.rhun"
+.Lwinget_dir: .asciz "/WinGet/Packages/"
+.Lwinget_dir_bs: .asciz "\\WinGet\\Packages\\"
 .Li_update: .asciz "Update to "
 .Li_updating: .asciz "Updating\342\200\246"
 .Li_restart: .asciz "Restart to update"
