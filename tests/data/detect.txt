@@ -96,3 +96,6 @@ x.sh	#!/usr/bin/env python3
 main.v
 build.vsh
 v.mod
+model.type
+genotype.toml
+model.type.bak

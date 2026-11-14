@@ -44,10 +44,16 @@ if [ "$(uname -s)" = Linux ]; then
     check x11-string build/x11_string_test
     check x11-send build/x11_send_test
     check x11-metadata build/x11_metadata_test
+    check ctext build/ctext_test
     check wayland-paste build/wayland_paste_test
     check wayland-send build/wayland_send_test
     check wayland-metadata build/wayland_metadata_test
     check clipboard-async build/clipboard_async_test
+    if [ -f /usr/share/fonts/truetype/nanum/NanumGothicCoding.ttf ]; then
+        check font-fallback build/font_fallback_test
+    else
+        echo "skip font-fallback (needs fonts-nanum)"
+    fi
 fi
 check editor-clipboard build/editor_clipboard_test
 check editor-paste build/editor_paste_test
@@ -86,6 +92,7 @@ check memmove build/memmove_test
 python3 tests/mem-try.py || fail=1
 python3 tests/mem-helpers.py || fail=1
 check syntax build/syntax_test
+check syntax-word build/grammar_test --try tests/data/region-word.syn tests/data/region-word.txt
 check themes build/theme_test
 check term build/term_test
 check diff build/diff_test
@@ -147,6 +154,7 @@ sh tests/detach.sh || fail=1
 sh tests/blink.sh || fail=1
 python3 tests/field-blink.py || fail=1
 sh tests/session.sh || fail=1
+python3 tests/window-state.py || fail=1
 python3 tests/desktop-ux.py || fail=1
 python3 tests/mac-launch.py || fail=1
 python3 tests/x11-auth.py || fail=1

@@ -192,6 +192,19 @@ with tempfile.TemporaryDirectory(prefix='rhun-update-') as temporary:
             assert not list(portable.parent.glob('.rhun-update-*'))
             print('ok   update/source-build-does-not-replace-itself', flush=True)
 
+        # A winget installation offers the update and leaves the replacing to winget upgrade
+        winget = (temp / 'Microsoft/WinGet/Packages/rhun.rhun_Microsoft.Winget.Source_8wekyb3d8bbwe'
+                  / ('rhun-' + CURRENT))
+        shutil.copytree(portable, winget)
+        winget_env = dict(env, RHUN_UPDATE_TARGET=str(winget / 'rhun.com'))
+        result = run('winget', [*check, 'cmd install_update', 'wait-update', 'print-update', 'print-toast'],
+                     winget_env, installation=winget)
+        assert result.returncode == 0 and b'state=available' in result.stdout, result.stdout
+        assert f'{LATEST} is available; update with winget upgrade rhun.rhun'.encode() in result.stdout, result.stdout
+        assert (winget / 'rhun.exe').read_bytes() == original
+        assert not list(winget.parent.glob('.rhun-update-*'))
+        print('ok   update/winget-installation-defers-to-winget', flush=True)
+
         checksums.write_text(f'{"0" * 64}  {asset}\n')
         result = run('bad-checksum', [*check, 'cmd install_update', 'wait-update', 'print-update'])
         assert result.returncode == 0 and b'state=available' in result.stdout, result.stdout

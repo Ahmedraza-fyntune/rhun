@@ -1,0 +1,21 @@
+name = Genotype
+files = *.type
+icon = code purple
+# A complete import line has one color, including trailing comments. This shields the /* in
+# wildcard paths. A block comment begun on an import line does not continue on the next line.
+region = use eol preproc bol word
+comment = //
+block = /* */
+string = " \
+captypes = yes
+prefix = @a
+keywords = use as
+types = any boolean string number int i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize float f32 f64
+constants = true false null
+brackets = () [] {}
+autoclose = ( ) [ ] { } " "
+autoclose_code = "
+surround = ( ) [ ] { } " "
+colon_indent = no
+continue = /// //!
+fold_markers = #region #endregion

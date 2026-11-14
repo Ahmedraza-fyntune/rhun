@@ -64,6 +64,20 @@ class LangConf(contribhost.Contrib):
 
     # ---------------------------------------------------------------- built-in configurations
 
+    def test_genotype_pairs_indentation_and_comment_tokens(self):
+        doc, _ = self.edit('schema.type', '', ['type User: {', 'key Return',
+                                               'type name: "Ada",', 'key Return',
+                                               'type active: boolean,', 'key Down'])
+        self.assertEqual(doc, 'User: {\n    name: "Ada",\n    active: boolean,\n}')
+        doc, _ = self.edit('schema.type', 'User: string', ['cmd select_all', 'cmd toggle_comment'])
+        self.assertEqual(doc, '// User: string')
+        doc, _ = self.edit('schema.type', '/// User documentation', ['key Return', 'type More'])
+        self.assertEqual(doc, '/// User documentation\n/// More')
+        doc, _ = self.edit('schema.type', '//! Module documentation', ['key Return', 'type More'])
+        self.assertEqual(doc, '//! Module documentation\n//! More')
+        doc, _ = self.edit('schema.type', '', ["type '"])
+        self.assertEqual(doc, "'")
+
     def test_lua_enter_outdent_pairs_and_strings(self):
         doc, _ = self.edit('m.lua', '', ['type if x then', 'key Return', 'type print("a', 'type (', 'key End',
                                          'key Return', 'type else', 'key Return', 'type y = {', 'key Return',

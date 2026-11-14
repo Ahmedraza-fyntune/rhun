@@ -311,8 +311,19 @@ body = f'''<main id="main" class="wrap guide-layout">
 (out / 'extensions' / 'catalog').mkdir(parents=True, exist_ok=True)
 (out / 'extensions' / 'catalog' / 'index.html').write_text(document('Extensions', 'Reviewed extensions for rhun, with Install links that open rhun.', '/extensions/catalog/', body, 'docs-guide'))
 
+# The code signing policy (SignPath Foundation's terms), linked from the footer and Install
+body = f'''<main id="main" class="wrap guide-layout">
+    <aside class="guide-sidebar">{guide_nav()}</aside>
+    <div class="guide-main">
+      <header class="guide-heading"><h1>Code signing policy</h1><p>How rhun’s Windows executables are signed, who approves it, and what rhun sends over the network.</p></header>
+      <article class="guide-content" aria-label="Code signing policy">{(SOURCE / 'code-signing.html').read_text()}</article>
+    </div>
+    </main>'''
+(out / 'code-signing').mkdir(parents=True, exist_ok=True)
+(out / 'code-signing' / 'index.html').write_text(document('Code signing policy', 'How rhun’s Windows executables are signed, who approves it, and what rhun sends over the network.', '/code-signing/', body, 'docs-guide'))
+
 # Keep discovery URLs in sync with the actual generated pages.
 sitemap = out / 'sitemap.xml'
 xml = sitemap.read_text()
-urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/', '/extensions/v1.1/', '/extensions/catalog/']
+urls = ['/docs/'] + [f'/docs/{p["slug"]}/' for p in pages] + ['/extensions/v1/', '/extensions/v1.1/', '/extensions/catalog/', '/code-signing/']
 sitemap.write_text(xml.replace('</urlset>', ''.join(f'  <url><loc>https://rhun.app{url}</loc></url>\n' for url in urls) + '</urlset>'))

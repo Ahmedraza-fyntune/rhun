@@ -254,7 +254,7 @@ class SettingsUI(unittest.TestCase):
         self.assertEqual(self.value('ui', 'theme'), 'github-light')
 
     def test_dark_and_light_theme_buttons_pick_for_their_mode(self):
-        # The system is dark: the light mode's list previews its pick, then the dark theme is back.
+        # The system is dark: confirming a light mode pick keeps it as the fixed theme.
         self.configure()
         self.env['RHUN_APPEARANCE'] = 'dark'
         y = self.row_y('ui', 'light_theme')
@@ -263,10 +263,11 @@ class SettingsUI(unittest.TestCase):
         states = [line for line in output.splitlines() if line.startswith('tabs=')]
         self.assertIn('theme=rhun-light', states[0])
         self.assertIn('theme=github-light', states[1])
-        self.assertIn('theme=rhun-dark', states[2])
+        self.assertIn('theme=github-light', states[2])
         self.assertEqual(self.value('ui', 'light_theme'), 'github-light')
         self.assertEqual(self.value('ui', 'dark_theme'), 'rhun-dark')
-        self.assertEqual(self.value('ui', 'theme'), 'rhun-dark')
+        self.assertEqual(self.value('ui', 'theme'), 'github-light')
+        self.assertEqual(self.value('ui', 'follow_system'), 'false')
         self.configure()
         output = self.run_editor([f'click 1000 {self.row_y("ui", "dark_theme")}', 'type nord',
                                   'key Return', 'print-state'])

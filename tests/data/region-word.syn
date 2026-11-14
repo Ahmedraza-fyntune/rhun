@@ -1,0 +1,7 @@
+name = Region Word
+files = *.regionword
+ident = -
+region = use eol preproc word
+region = password eol string
+region = word eol constant
+region = if eol keyword

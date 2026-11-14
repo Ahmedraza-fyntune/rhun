@@ -99,6 +99,7 @@ body.video-open { overflow: hidden; }
 .install-layout { display: grid; grid-template-columns: .8fr 1.2fr; gap: 80px; align-items: center; }
 .install-layout > div > p { color: var(--muted); font-size: 14px; margin-top: 18px; }
 .install-download { margin-top: 25px; background: transparent; color: var(--accent-text); }
+.install-policy a { color: inherit; }
 .os-symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
 .os-icon { width: 15px; height: 15px; flex: none; fill: currentColor; }
 .supported-os, .install-os-label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
