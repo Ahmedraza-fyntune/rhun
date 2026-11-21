@@ -2465,5 +2465,6 @@ g_commands:
     COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
     COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""
     COMMAND fold_level_3, "Fold Level 3", cmd_fold_level_3, ""
+    COMMAND codebase_insights, "Codebase Insights: Show Project Statistics", cmd_codebase_insights, ""
     .quad 0, 0, 0, 0
 

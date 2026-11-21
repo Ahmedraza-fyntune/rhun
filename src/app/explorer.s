@@ -1235,7 +1235,17 @@ FN explorer_body_draw
     mov r8d, ebx
     call ui_btn
     mov [rsp + 28], eax
-    test eax, UB_PRESS
+    test eax, UB_HOVER
+    jz 48f
+    mov rdi, r14
+    lea esi, [r12 + ID_EXP_ROW]
+    mov edx, [rsp]
+    mov ecx, r13d
+    add ecx, ebx
+    mov r8d, [rsp + 8]
+    mov r9d, eax
+    call insights_explorer_hover
+48: test eax, UB_PRESS
     jz 5f
     mov [rip + exp_cursor], r12d
     mov dword ptr [rip + g_focus], FOCUS_EXPLORER
@@ -1965,16 +1975,20 @@ FN menu_print
 .Lm_reveal: .asciz "Open in File Manager"
 .endif
 .endif
+.Lm_insights: .asciz "Codebase Insights"
 .p2align 3
 menu_items:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
-    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file, 0, 0
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file
+    .quad .Lm_insights, cmd_codebase_insights_target, 0, 0
 menu_items_git:
     .quad .Lm6, open_changes, .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm3, cmd_rename_file
-    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file, 0, 0
+    .quad .Lm4, cmd_delete_file, .Lm5, cmd_copy_path, .Lm_reveal, cmd_reveal_file
+    .quad .Lm_insights, cmd_codebase_insights_target, 0, 0
 menu_items_root:
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, copy_project_path
-    .quad .Lm_reveal, reveal_project, 0, 0
+    .quad .Lm_reveal, reveal_project, .Lm_insights, cmd_codebase_insights_target, 0, 0
 menu_items_folder:              # resources group: a workspace folder's row
     .quad .Lm1, cmd_new_file_prompt, .Lm2, cmd_new_folder, .Lm5, cmd_copy_path
-    .quad .Lm_reveal, cmd_reveal_file, .Lm_remove_folder, cmd_remove_workspace_folder, 0, 0
+    .quad .Lm_reveal, cmd_reveal_file, .Lm_remove_folder, cmd_remove_workspace_folder
+    .quad .Lm_insights, cmd_codebase_insights_target, 0, 0
