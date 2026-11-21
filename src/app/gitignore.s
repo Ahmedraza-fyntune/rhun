@@ -58,9 +58,9 @@ FN gitignore_enter_dir
     mov [rsp + 16], rdx         # rel_len
     mov [rsp + 24], rcx         # depth
 
-    # If depth == 0, check .git/info/exclude first
-    test ecx, ecx
-    jnz .Lge_check_gitignore
+    # If rel_len == 0 (root directory), check .git/info/exclude first
+    cmp qword ptr [rsp + 16], 0
+    jne .Lge_check_gitignore
     mov rdi, [rsp]
     lea rsi, [rip + .Lgi_git_exclude]
     call path_join
@@ -314,7 +314,7 @@ FN gitignore_parse_buf
 
 # gitignore_is_ignored(rel_path, rel_len, name, is_dir) -> eax 1 if ignored, 0 if included
 FN gitignore_is_ignored
-    PROLOGUE 32
+    PROLOGUE 64
     mov r12, rdi                # rel_path
     mov r13, rsi                # rel_len
     mov r14, rdx                # name
@@ -337,12 +337,6 @@ FN gitignore_is_ignored
     add rax, [rip + gi_rules + VEC_ptr]
     mov [rsp + 8], rax          # current rule pointer
 
-    # Check dironly: if rule.dironly == 1 and is_dir == 0, cannot match
-    cmp byte ptr [rax + GR_dironly], 0
-    je .Lgii_check_base
-    test r15d, r15d
-    jz .Lgii_rule_loop
-
 .Lgii_check_base:
     mov ecx, [rax + GR_base_len]
     test ecx, ecx
@@ -357,6 +351,7 @@ FN gitignore_is_ignored
     mov rdi, r12
     mov rsi, rcx
     mov rdx, r8
+    mov rcx, rsi
     call str_eq
     test eax, eax
     jz .Lgii_rule_loop
@@ -367,40 +362,73 @@ FN gitignore_is_ignored
     lea r8, [r12 + rcx]         # sub_rel = rel_path + base_len
     mov r9d, r13d
     sub r9d, ecx                # sub_len = rel_len - base_len
+    test r9d, r9d
+    jz .Lgii_rule_loop
+
+    mov [rsp + 16], r8          # sub_rel
+    mov [rsp + 24], r9          # sub_len
 
     mov r10, [rip + gi_strings + SB_ptr]
     mov edx, [rax + GR_pat_off]
     add r10, rdx                # pattern ptr
     mov edx, [rax + GR_pat_len] # pattern len
+    mov [rsp + 32], r10         # pat
+    mov [rsp + 40], rdx         # pat_len
 
     cmp byte ptr [rax + GR_anchored], 0
     jne .Lgii_anchored
 
     # UNANCHORED:
-    # 1. Match against name (basename)
-    mov rdi, r10
-    mov esi, edx
-    mov rdx, r14
-    mov rcx, [rsp]              # name_len
+    # 1. Check each directory segment in sub_rel
+    xor r10, r10                # seg_start
+    xor r11, r11                # current index
+    jmp .Lgii_unanchored_check
+
+.Lgii_unanchored_seg_loop:
+    mov r8, [rsp + 16]
+    cmp byte ptr [r8 + r11], '/'
+    jne .Lgii_unanchored_next_char
+
+    # Found '/' at r11. Segment is [seg_start .. r11)
+    mov rcx, r11
+    sub rcx, r10                # seg_len
+    jz .Lgii_unanchored_adv_seg
+
+    push r10
+    push r11
+    mov rdi, [rsp + 32 + 16]    # pat
+    mov rsi, [rsp + 40 + 16]    # pat_len
+    mov rdx, [rsp + 16 + 16]    # sub_rel
+    add rdx, [rsp + 8]          # + seg_start (which was pushed first: r11 is at rsp, r10 at rsp+8)
+    # rcx is seg_len
     call gi_match
+    pop r11
+    pop r10
     test eax, eax
-    jnz .Lgii_matched
+    jnz .Lgii_matched           # Directory segment matched!
 
-    # 2. Also match against sub_rel
+.Lgii_unanchored_adv_seg:
+    lea r10, [r11 + 1]          # seg_start = r11 + 1
+.Lgii_unanchored_next_char:
+    inc r11
+.Lgii_unanchored_check:
+    mov r9, [rsp + 24]          # sub_len
+    cmp r11, r9
+    jb .Lgii_unanchored_seg_loop
+
+.Lgii_unanchored_leaf:
+    # 2. Check leaf target (name)
+    # If rule.dironly == 1 and is_dir == 0, cannot match a file
     mov rax, [rsp + 8]
-    mov r10, [rip + gi_strings + SB_ptr]
-    mov edx, [rax + GR_pat_off]
-    add r10, rdx
-    mov edx, [rax + GR_pat_len]
-    mov ecx, [rax + GR_base_len]
-    lea r8, [r12 + rcx]
-    mov r9d, r13d
-    sub r9d, ecx
-
-    mov rdi, r10
-    mov esi, edx
-    mov rdx, r8
-    mov ecx, r9d
+    cmp byte ptr [rax + GR_dironly], 0
+    je 1f
+    test r15d, r15d
+    jz .Lgii_rule_loop
+1:
+    mov rdi, [rsp + 32]         # pat
+    mov rsi, [rsp + 40]         # pat_len
+    mov rdx, r14                # name
+    mov rcx, [rsp]              # name_len
     call gi_match
     test eax, eax
     jnz .Lgii_matched
@@ -408,13 +436,52 @@ FN gitignore_is_ignored
 
 .Lgii_anchored:
     # ANCHORED:
-    mov rdi, r10
-    mov esi, edx
-    mov rdx, r8
-    mov ecx, r9d
+    # 1. Check each directory prefix ending at '/'
+    xor r11, r11                # prefix len
+    jmp .Lgii_anchored_check
+
+.Lgii_anchored_prefix_loop:
+    mov r8, [rsp + 16]
+    cmp byte ptr [r8 + r11], '/'
+    jne .Lgii_anchored_next_char
+
+    # Found '/' at r11. Prefix sub_rel[0..r11] is a directory!
+    push r11
+    push r11
+    mov rdi, [rsp + 32 + 16]    # pat
+    mov rsi, [rsp + 40 + 16]    # pat_len
+    mov rdx, [rsp + 16 + 16]    # sub_rel
+    mov rcx, [rsp + 8]          # prefix len (r11)
+    call gi_match
+    pop r11
+    pop r11
+    test eax, eax
+    jnz .Lgii_matched           # Directory prefix matched!
+
+.Lgii_anchored_next_char:
+    inc r11
+.Lgii_anchored_check:
+    mov r9, [rsp + 24]          # sub_len
+    cmp r11, r9
+    jb .Lgii_anchored_prefix_loop
+
+.Lgii_anchored_exact:
+    # 2. Check exact match on full sub_rel
+    # If rule.dironly == 1 and is_dir == 0, cannot match a file
+    mov rax, [rsp + 8]
+    cmp byte ptr [rax + GR_dironly], 0
+    je 2f
+    test r15d, r15d
+    jz .Lgii_rule_loop
+2:
+    mov rdi, [rsp + 32]         # pat
+    mov rsi, [rsp + 40]         # pat_len
+    mov rdx, [rsp + 16]         # sub_rel
+    mov rcx, [rsp + 24]         # sub_len
     call gi_match
     test eax, eax
-    jz .Lgii_rule_loop
+    jnz .Lgii_matched
+    jmp .Lgii_rule_loop
 
 .Lgii_matched:
     mov rax, [rsp + 8]
@@ -430,6 +497,8 @@ FN gitignore_is_ignored
 
 # gi_match(pat, pat_len, str, str_len) -> eax 1 on match, 0 on mismatch
 FN gi_match
+    mov qword ptr [rip + gi_steps], 0
+gi_match_inner:
     PROLOGUE
     mov r12, rdi                # pat
     lea r13, [rdi + rsi]        # pat_end
@@ -575,7 +644,7 @@ FN gi_match
     mov rdx, r14
     mov rcx, r15
     sub rcx, r14
-    call gi_match
+    call gi_match_inner
     test eax, eax
     jnz .Lgim_yes
 4:  cmp r14, r15
@@ -594,7 +663,7 @@ FN gi_match
     mov rdx, r14
     mov rcx, r15
     sub rcx, r14
-    call gi_match
+    call gi_match_inner
     test eax, eax
     jnz .Lgim_yes
     cmp r14, r15
@@ -610,7 +679,7 @@ FN gi_match
     mov rdx, r14
     mov rcx, r15
     sub rcx, r14
-    call gi_match
+    call gi_match_inner
     test eax, eax
     jnz .Lgim_yes
     cmp r14, r15

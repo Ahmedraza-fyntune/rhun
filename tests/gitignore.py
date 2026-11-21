@@ -151,6 +151,81 @@ class GitignoreSearchTest(unittest.TestCase):
         self.assertIn('gen/output.txt', out)
         self.assertIn('docs/todo.draft', out)
 
+    def test_large_project_with_anchored_vendor_rule(self):
+        # Test reproducing Laravel project setup with /vendor and many files
+        lar_proj = self.home / 'laravel_proj'
+        lar_proj.mkdir()
+        gitignore_content = (
+            "*.log\n"
+            ".DS_Store\n"
+            ".env\n"
+            ".env.backup\n"
+            ".env.production\n"
+            ".phpactor.json\n"
+            "/.agents\n"
+            ".phpunit.result.cache\n"
+            "/.fleet\n"
+            "/.idea\n"
+            "/.nova\n"
+            "/Temp\n"
+            "/.phpunit.cache\n"
+            "/.vscode\n"
+            "/.zed\n"
+            "/auth.json\n"
+            "/node_modules\n"
+            "/public/build\n"
+            "/public/hot\n"
+            "/public/storage\n"
+            "/storage/*.key\n"
+            "/storage/pail\n"
+            "/vendor\n"
+            "Homestead.json\n"
+            "Homestead.yaml\n"
+            "Thumbs.db\n"
+        )
+        (lar_proj / '.gitignore').write_text(gitignore_content, encoding='utf-8')
+
+        # Project files matching query
+        (lar_proj / 'tests' / 'Feature').mkdir(parents=True)
+        (lar_proj / 'tests' / 'Feature' / 'DivisionExamTimetableTest.php').write_text('<?php', encoding='utf-8')
+        (lar_proj / 'tests' / 'Feature' / 'DisciplineModuleTest.php').write_text('<?php', encoding='utf-8')
+        (lar_proj / 'app' / 'Casts').mkdir(parents=True)
+        (lar_proj / 'app' / 'Casts' / 'SafeEncryptedString.php').write_text('<?php', encoding='utf-8')
+
+        # Vendor files matching query (must NOT appear in results)
+        (lar_proj / 'vendor' / 'nikic' / 'php-parser').mkdir(parents=True)
+        (lar_proj / 'vendor' / 'nikic' / 'php-parser' / 'ConstExprEvaluationException.php').write_text('<?php', encoding='utf-8')
+        (lar_proj / 'vendor' / 'symfony' / 'clock').mkdir(parents=True)
+        (lar_proj / 'vendor' / 'symfony' / 'clock' / 'ClockSensitiveTrait.php').write_text('<?php', encoding='utf-8')
+
+        # Hundreds of other files to stress rule count and steps
+        for i in range(500):
+            d = lar_proj / f'dir{i}'
+            d.mkdir()
+            (d / f'file{i}.txt').write_text('data', encoding='utf-8')
+
+        script = self.home / 'lar_test.rsc'
+        script.write_text('cmd quick_open\ntype teenet\nprint-palette\nquit\n', encoding='utf-8')
+
+        r = subprocess.run(
+            [str(EXE), lar_proj.as_posix(), '--headless', '1400x860', '--script', script.as_posix()],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=20
+        )
+        self.assertEqual(r.returncode, 0, f"Error: {r.stderr}\nStdout: {r.stdout}")
+
+        # Vendor files must NOT appear
+        self.assertNotIn('vendor', r.stdout)
+        self.assertNotIn('ConstExprEvaluationException', r.stdout)
+        self.assertNotIn('ClockSensitiveTrait', r.stdout)
+
+        # Expected project files must appear
+        self.assertIn('DivisionExamTimetableTest.php', r.stdout)
+        self.assertIn('DisciplineModuleTest.php', r.stdout)
+        self.assertIn('SafeEncryptedString.php', r.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
