@@ -66,6 +66,8 @@ cfg_scroll_past_end: .long 1
 cfg_smooth_caret: .long 1
 cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
+.globl cfg_include_ignored
+cfg_include_ignored: .long 0
 .globl cfg_multi_cursor_paste
 cfg_multi_cursor_paste: .long 0
 .globl cfg_multi_cursor_modifier
@@ -961,6 +963,7 @@ g_settings:
     SETTING .Ls_files, auto_save, ST_CHOICE, cfg_auto_save, 0, 3, 1, 0, "Auto save", "Automatically save modified files.", .Lautosave_opts
     SETTING .Ls_files, auto_save_delay, ST_INT, cfg_auto_save_delay, 200, 60000, 100, 0, "Auto save delay", "Delay in milliseconds before saving modified files."
     SETTING .Ls_files, exclude, ST_STR, cfg_exclude, 0, 0, 0, 0, "Hidden in explorer", "Space separated names the explorer skips."
+    SETTING .Ls_files, include_ignored, ST_BOOL, cfg_include_ignored, 0, 1, 1, 0, "Include ignored files", "Include .gitignore and ignored files in file search."
     SETTING .Ls_agents, claude, ST_BOOL, cfg_agents_claude, 0, 1, 1, 0, "Claude Code", "Show Claude Code sessions in the agents panel."
     SETTING .Ls_agents, codex, ST_BOOL, cfg_agents_codex, 0, 1, 1, 0, "Codex", "Show Codex sessions in the agents panel."
     SETTING .Ls_agents, grok, ST_BOOL, cfg_agents_grok, 0, 1, 1, 0, "Grok Build", "Show Grok Build sessions in the agents panel."
