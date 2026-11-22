@@ -1245,7 +1245,7 @@ FN explorer_body_draw
     mov r8d, [rsp + 8]
     mov r9d, eax
     call insights_explorer_hover
-48: test eax, UB_PRESS
+48: test dword ptr [rsp + 28], UB_PRESS
     jz 5f
     mov [rip + exp_cursor], r12d
     mov dword ptr [rip + g_focus], FOCUS_EXPLORER

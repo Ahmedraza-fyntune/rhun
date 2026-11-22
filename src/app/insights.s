@@ -1636,8 +1636,8 @@ FN insights_format_timestamp
     mov ecx, 3600
     div rcx
     mov [rsp + 16], rax         # hours
-    xor edx, edx
     mov rax, rdx
+    xor edx, edx
     mov ecx, 60
     div rcx
     mov [rsp + 24], rax         # minutes
@@ -1801,19 +1801,14 @@ FN insights_format_timestamp
 .section .rodata
 .Ltip_file_prefix:  .asciz "File: "
 .Ltip_folder_prefix:.asciz "Folder: "
-.Ltip_type_prefix:  .asciz "\nType: "
-.Ltip_size_prefix:  .asciz "\nSize: "
-.Ltip_lines_prefix: .asciz "\nLines: "
-.Ltip_code_prefix:  .asciz " (Code: "
+.Ltip_dot_sep:      .asciz "  \302\267  "
 .Ltip_open_paren:   .asciz " ("
-.Ltip_comm_prefix:  .asciz ", Comment: "
-.Ltip_blank_prefix: .asciz ", Blank: "
 .Ltip_close_paren:  .asciz ")"
-.Ltip_mod_prefix:   .asciz "\nModified: "
-.Ltip_contains:     .asciz "\nContains: "
-.Ltip_files_suf:    .asciz " files, "
-.Ltip_dirs_suf:     .asciz " directories"
-.Ltip_bin_format:   .asciz "\nFormat: Binary File"
+.Ltip_lines_suf:    .asciz " lines ("
+.Ltip_code_suf:     .asciz " code, "
+.Ltip_comm_suf:     .asciz " comment, "
+.Ltip_blank_suf:    .asciz " blank)"
+.Ltip_bin_file:     .asciz "Binary ("
 
 .text
 
@@ -1826,6 +1821,9 @@ FN insights_explorer_hover
     mov [rsp + 24], ecx         # y_bottom
     mov [rsp + 32], r8d         # w
     mov [rsp + 40], r9d         # flags
+
+    cmp dword ptr [rip + cfg_tooltips], 0
+    je .Leh_done
 
     mov rbx, rdi
     test rbx, rbx
@@ -1857,23 +1855,44 @@ FN insights_explorer_hover
     mov rsi, [r13 + IF_name]
     call sb_push_cstr
 
-    # Type: <type>
+    # Dot separator
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_type_prefix]
+    lea rsi, [rip + .Ltip_dot_sep]
+    call sb_push_cstr
+
+    # Binary or Language Type
+    cmp dword ptr [r13 + IF_is_binary], 0
+    jne .Leh_file_bin
+
+    # Language Type
+    lea rdi, [rip + insights_sb]
+    mov rsi, [r13 + IF_type]
+    call sb_push_cstr
+    jmp .Leh_file_size
+
+.Leh_file_bin:
+    lea rdi, [rip + insights_sb]
+    lea rsi, [rip + .Ltip_bin_file]
     call sb_push_cstr
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_type]
     call sb_push_cstr
-
-    # Size: <size>
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_size_prefix]
+    lea rsi, [rip + .Ltip_close_paren]
     call sb_push_cstr
+
+.Leh_file_size:
+    # Dot separator
+    lea rdi, [rip + insights_sb]
+    lea rsi, [rip + .Ltip_dot_sep]
+    call sb_push_cstr
+
+    # Formatted Size
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_size]
     call insights_format_size
 
-    # Size in bytes
+    # Size in bytes: (X bytes)
     lea rdi, [rip + insights_sb]
     lea rsi, [rip + .Ltip_open_paren]
     call sb_push_cstr
@@ -1887,128 +1906,64 @@ FN insights_explorer_hover
     lea rsi, [rip + .Ltip_close_paren]
     call sb_push_cstr
 
-    # Lines or Binary Format
+    # Lines for text file: "  ·  X lines (Y code, Z comment, W blank)"
     cmp dword ptr [r13 + IF_is_binary], 0
-    jne .Leh_file_bin
+    jne .Leh_file_mod
 
-    # Text file lines: Total (Code: X, Comment: Y, Blank: Z)
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_lines_prefix]
+    lea rsi, [rip + .Ltip_dot_sep]
     call sb_push_cstr
+
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_tot_lines]
     call sb_push_u64
 
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_code_prefix]
+    lea rsi, [rip + .Ltip_lines_suf]
     call sb_push_cstr
+
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_code_lines]
     call sb_push_u64
 
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_comm_prefix]
+    lea rsi, [rip + .Ltip_code_suf]
     call sb_push_cstr
+
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_comm_lines]
     call sb_push_u64
 
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_blank_prefix]
+    lea rsi, [rip + .Ltip_comm_suf]
     call sb_push_cstr
+
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_blank_lines]
     call sb_push_u64
 
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_close_paren]
-    call sb_push_cstr
-    jmp .Leh_file_mod
-
-.Leh_file_bin:
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_bin_format]
+    lea rsi, [rip + .Ltip_blank_suf]
     call sb_push_cstr
 
 .Leh_file_mod:
-    # Modified timestamp
+    # Dot separator & Modified timestamp
     lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_mod_prefix]
+    lea rsi, [rip + .Ltip_dot_sep]
     call sb_push_cstr
+
     lea rdi, [rip + insights_sb]
     mov rsi, [r13 + IF_mtime]
     call insights_format_timestamp
     jmp .Leh_show_tip
 
 .Leh_dir:
-    # Folder hover tooltip
+    # Folder hover tooltip: fast name display without recursive disk traversal
     lea rdi, [rip + insights_sb]
     lea rsi, [rip + .Ltip_folder_prefix]
     call sb_push_cstr
     lea rdi, [rip + insights_sb]
     mov rsi, [rbx]              # N_name (offset 0)
-    call sb_push_cstr
-
-    # Scan directory aggregation
-    mov rdi, r12
-    call insights_scan_project
-
-    # Contains: X files, Y directories
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_contains]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_files]
-    call sb_push_u64
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_files_suf]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_dirs]
-    call sb_push_u64
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_dirs_suf]
-    call sb_push_cstr
-
-    # Total Size
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_size_prefix]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_size]
-    call insights_format_size
-
-    # Lines: Total (Code: X, Comment: Y, Blank: Z)
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_lines_prefix]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_tot_lines]
-    call sb_push_u64
-
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_code_prefix]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_code_lines]
-    call sb_push_u64
-
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_comm_prefix]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_comm_lines]
-    call sb_push_u64
-
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_blank_prefix]
-    call sb_push_cstr
-    lea rdi, [rip + insights_sb]
-    mov rsi, [rip + insights_stats + IS_blank_lines]
-    call sb_push_u64
-
-    lea rdi, [rip + insights_sb]
-    lea rsi, [rip + .Ltip_close_paren]
     call sb_push_cstr
 
 .Leh_show_tip:
@@ -2026,6 +1981,7 @@ FN insights_explorer_hover
     call tip_note_text
 
 .Leh_done:
+    mov eax, [rsp + 40]
     EPILOGUE
 
 # ---------------- Report Generation ----------------

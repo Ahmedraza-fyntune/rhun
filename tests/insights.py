@@ -274,6 +274,32 @@ class CodebaseInsightsTest(unittest.TestCase):
         self.assertIn('subfile.py', out)
         self.assertNotIn('outside.txt', out)
 
+    def test_explorer_hover_tooltips_and_startup_stability(self):
+        """Hovering over explorer rows generates single-line tooltips without crashing over time."""
+        (self.project / 'subfolder').mkdir()
+        (self.project / 'code.py').write_text("# sample\nprint('hello')\n", encoding='utf-8')
+        (self.project / 'binary.bin').write_bytes(b'\x00\x01\x02\x03')
+
+        # Hover over folder and file rows and verify tooltips and stability
+        out = self.run_script([
+            'move 60 92',
+            'wait 650',
+            'print-tip',
+            'move 60 116',
+            'wait 650',
+            'print-tip',
+            'move 60 140',
+            'wait 650',
+            'print-tip',
+            'wait 5500',  # exceed 5s update timer to verify background timers and stability
+            'quit'
+        ])
+
+        self.assertIn('tip=Folder:', out)
+        self.assertIn('tip=File:', out)
+        self.assertIn('code.py', out)
+        self.assertIn('Python', out)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -68,8 +68,6 @@ cfg_restore_session: .long 1
 cfg_auto_pairs: .long 1
 .globl cfg_include_ignored
 cfg_include_ignored: .long 0
-.globl cfg_insights_exclude
-cfg_insights_exclude: .quad .Lempty
 .globl cfg_multi_cursor_paste
 cfg_multi_cursor_paste: .long 0
 .globl cfg_multi_cursor_modifier
@@ -116,6 +114,8 @@ cfg_ui_font: .quad .Lempty
 .globl cfg_file_icons
 cfg_file_icons: .quad .Lempty   # [ui] file_icons: rhun (empty), none or OWNER/NAME/THEME (iconth.s)
 cfg_exclude: .quad .Ldef_exclude
+.globl cfg_insights_exclude
+cfg_insights_exclude: .quad .Lempty
 cfg_term_shell: .quad .Lempty
 cfg_term_font: .quad .Lempty
 cfg_commit_model: .quad .Ldefault_model
