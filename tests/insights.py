@@ -275,8 +275,11 @@ class CodebaseInsightsTest(unittest.TestCase):
         self.assertNotIn('outside.txt', out)
 
     def test_explorer_hover_tooltips_and_startup_stability(self):
-        """Hovering over explorer rows generates single-line tooltips without crashing over time."""
-        (self.project / 'subfolder').mkdir()
+        """Hovering over explorer rows generates single-line tooltips with file/folder counts without crashing."""
+        sub = self.project / 'subfolder'
+        sub.mkdir()
+        (sub / 'nested.py').write_text("print('nested')\n", encoding='utf-8')
+        (sub / 'inner').mkdir()
         (self.project / 'code.py').write_text("# sample\nprint('hello')\n", encoding='utf-8')
         (self.project / 'binary.bin').write_bytes(b'\x00\x01\x02\x03')
 
@@ -299,6 +302,7 @@ class CodebaseInsightsTest(unittest.TestCase):
         self.assertIn('tip=File:', out)
         self.assertIn('code.py', out)
         self.assertIn('Python', out)
+        self.assertTrue('file' in out and 'folder' in out)
 
 
 if __name__ == '__main__':

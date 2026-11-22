@@ -77,6 +77,14 @@ insights_sb:          .zero SB_SIZE
 insights_scan_depth:  .long 0
 insights_cancel_flag: .long 0
 
+dir_cache_path:       .zero 1024
+dir_cache_files:      .quad 0
+dir_cache_dirs:       .quad 0
+dir_cache_time:       .quad 0
+dir_count_files:      .quad 0
+dir_count_dirs:       .quad 0
+dir_count_depth:      .long 0
+
 .section .rodata
 # Default excluded directories
 .Ldef_git:         .asciz ".git"
@@ -327,6 +335,8 @@ FN insights_init
     mov qword ptr [rip + insights_types + VEC_len], 0
     mov qword ptr [rip + insights_dirs + VEC_len], 0
     mov dword ptr [rip + insights_cancel_flag], 0
+    mov byte ptr [rip + dir_cache_path], 0
+    mov qword ptr [rip + dir_cache_time], 0
     lea rdi, [rip + insights_sb]
     call sb_clear
     EPILOGUE
@@ -1809,8 +1819,139 @@ FN insights_format_timestamp
 .Ltip_comm_suf:     .asciz " comment, "
 .Ltip_blank_suf:    .asciz " blank)"
 .Ltip_bin_file:     .asciz "Binary ("
+.Ltip_empty_folder: .asciz "Empty"
+.Ltip_files_suf_cnt:.asciz " files"
+.Ltip_file_suf_cnt: .asciz " file"
+.Ltip_comma_space:  .asciz ", "
+.Ltip_folders_suf:  .asciz " folders"
+.Ltip_folder_suf:   .asciz " folder"
 
 .text
+
+# dir_count_cb(ctx, name, is_dir)
+FN dir_count_cb
+    PROLOGUE 32
+    mov [rsp], rdi              # abs_parent
+    mov [rsp + 8], rsi          # name
+    mov [rsp + 16], edx         # is_dir
+
+    # Skip hidden entries (starting with '.')
+    mov rax, [rsp + 8]
+    cmp byte ptr [rax], '.'
+    je .Ldccb_ret
+
+    # Check default exclusions
+    lea r12, [rip + default_exclusions]
+1:  mov rsi, [r12]
+    test rsi, rsi
+    jz .Ldccb_check_type
+    mov rdi, [rsp + 8]
+    call strcmp_eq
+    test eax, eax
+    jnz .Ldccb_ret
+    add r12, 8
+    jmp 1b
+
+.Ldccb_check_type:
+    cmp dword ptr [rsp + 16], 0
+    je .Ldccb_is_file
+
+    # Directory
+    inc qword ptr [rip + dir_count_dirs]
+
+    mov rdi, [rsp]
+    mov rsi, [rsp + 8]
+    call path_join
+    mov r12, rax
+
+    mov rdi, r12
+    call insights_walk_dir_count
+
+    mov rdi, r12
+    call mem_free
+    jmp .Ldccb_ret
+
+.Ldccb_is_file:
+    inc qword ptr [rip + dir_count_files]
+
+.Ldccb_ret:
+    EPILOGUE
+
+# insights_walk_dir_count(abs_path)
+FN insights_walk_dir_count
+    PROLOGUE 16
+    mov [rsp], rdi
+
+    mov eax, [rip + dir_count_depth]
+    cmp eax, 16
+    jae .Lwdc_done
+    inc dword ptr [rip + dir_count_depth]
+
+    mov rdi, [rsp]
+    lea rsi, [rip + dir_count_cb]
+    mov rdx, [rsp]
+    call dir_each
+
+    dec dword ptr [rip + dir_count_depth]
+.Lwdc_done:
+    EPILOGUE
+
+# insights_count_dir_contents(abs_path) -> rax: files, rdx: dirs
+FN insights_count_dir_contents
+    PROLOGUE 16
+    mov [rsp], rdi              # abs_path
+
+    # Check cache
+    lea rdi, [rip + dir_cache_path]
+    mov rsi, [rsp]
+    call strcmp_eq
+    test eax, eax
+    jz .Lcdc_miss
+
+    call time_ms
+    sub rax, [rip + dir_cache_time]
+    cmp rax, 2000
+    jae .Lcdc_miss
+
+    mov rax, [rip + dir_cache_files]
+    mov rdx, [rip + dir_cache_dirs]
+    EPILOGUE
+
+.Lcdc_miss:
+    # Copy path to dir_cache_path
+    mov rdi, [rsp]
+    call strlen
+    mov rcx, rax
+    cmp rcx, 1023
+    jbe 1f
+    mov rcx, 1023
+1:  lea rdi, [rip + dir_cache_path]
+    mov rsi, [rsp]
+    mov r8, rcx
+2:  test r8, r8
+    jz 3f
+    mov al, [rsi]
+    mov [rdi], al
+    inc rsi
+    inc rdi
+    dec r8
+    jmp 2b
+3:  mov byte ptr [rdi], 0
+
+    mov qword ptr [rip + dir_count_files], 0
+    mov qword ptr [rip + dir_count_dirs], 0
+    mov dword ptr [rip + dir_count_depth], 0
+
+    mov rdi, [rsp]
+    call insights_walk_dir_count
+
+    call time_ms
+    mov [rip + dir_cache_time], rax
+    mov rax, [rip + dir_count_files]
+    mov [rip + dir_cache_files], rax
+    mov rdx, [rip + dir_count_dirs]
+    mov [rip + dir_cache_dirs], rdx
+    EPILOGUE
 
 # insights_explorer_hover(node, id, x, y_bottom, w, flags)
 FN insights_explorer_hover
@@ -1958,13 +2099,69 @@ FN insights_explorer_hover
     jmp .Leh_show_tip
 
 .Leh_dir:
-    # Folder hover tooltip: fast name display without recursive disk traversal
+    # Folder hover tooltip: show folder name, files count, and folders count if present
     lea rdi, [rip + insights_sb]
     lea rsi, [rip + .Ltip_folder_prefix]
     call sb_push_cstr
     lea rdi, [rip + insights_sb]
     mov rsi, [rbx]              # N_name (offset 0)
     call sb_push_cstr
+
+    # Count contents of folder
+    mov rdi, r12                # N_path (offset 8)
+    call insights_count_dir_contents
+    mov r14, rax                # files count
+    mov r15, rdx                # dirs count
+
+    # Dot separator
+    lea rdi, [rip + insights_sb]
+    lea rsi, [rip + .Ltip_dot_sep]
+    call sb_push_cstr
+
+    # Check if empty (both files and dirs are 0)
+    mov rax, r14
+    or rax, r15
+    jnz .Leh_dir_has_content
+
+    lea rdi, [rip + insights_sb]
+    lea rsi, [rip + .Ltip_empty_folder]
+    call sb_push_cstr
+    jmp .Leh_show_tip
+
+.Leh_dir_has_content:
+    # Files count: X file / X files
+    lea rdi, [rip + insights_sb]
+    mov rsi, r14
+    call sb_push_u64
+
+    lea rdi, [rip + insights_sb]
+    cmp r14, 1
+    je 1f
+    lea rsi, [rip + .Ltip_files_suf_cnt]   # " files"
+    jmp 2f
+1:  lea rsi, [rip + .Ltip_file_suf_cnt]    # " file"
+2:  call sb_push_cstr
+
+    # Folders count if dirs > 0: ", Y folder" / ", Y folders"
+    test r15, r15
+    jz .Leh_show_tip
+
+    lea rdi, [rip + insights_sb]
+    lea rsi, [rip + .Ltip_comma_space]     # ", "
+    call sb_push_cstr
+
+    lea rdi, [rip + insights_sb]
+    mov rsi, r15
+    call sb_push_u64
+
+    lea rdi, [rip + insights_sb]
+    cmp r15, 1
+    je 3f
+    lea rsi, [rip + .Ltip_folders_suf]     # " folders"
+    jmp 4f
+3:  lea rsi, [rip + .Ltip_folder_suf]      # " folder"
+4:  call sb_push_cstr
+    jmp .Leh_show_tip
 
 .Leh_show_tip:
     lea rdi, [rip + insights_sb]
