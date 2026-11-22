@@ -1831,6 +1831,7 @@ load_files:
     jz 9f
     cmp dword ptr [rip + g_remote], 0
     jne .Llf_remote
+    call gitignore_init
     call wfold_count
     cmp eax, 2
     jae .Llf_folders
@@ -1839,6 +1840,7 @@ load_files:
     mov rdi, [rip + g_project]
     call scan_dir
 .Llf_fix:
+    call gitignore_free
     # labels point into strings (stable after the scan): offsets -> pointers
     xor ebx, ebx
 1:  cmp rbx, [rip + items + VEC_len]
@@ -1914,9 +1916,16 @@ scan_dir:
     jae 9f
     inc dword ptr [rip + scan_depth]
     mov rdi, rbx
+    lea rsi, [rip + scan_prefix]
+    mov edx, [rip + scan_plen]
+    mov ecx, [rip + scan_depth]
+    call gitignore_enter_dir
+    mov rdi, rbx
     lea rsi, [rip + scan_cb]
     mov rdx, rbx
     call dir_each
+    mov edi, [rip + scan_depth]
+    call gitignore_leave_dir
     dec dword ptr [rip + scan_depth]
 9:  EPILOGUE
 
@@ -1941,6 +1950,16 @@ scan_cb:
     lea rcx, [rip + scan_prefix]
     sub rax, rcx
     mov r15, rax                # rel len
+    cmp dword ptr [rip + cfg_include_ignored], 0
+    jne .Lsc_include_ok
+    lea rdi, [rip + scan_prefix]
+    mov rsi, r15
+    mov rdx, r13
+    mov ecx, r14d
+    call gitignore_is_ignored
+    test eax, eax
+    jnz 9f
+.Lsc_include_ok:
     test r14d, r14d
     jz 1f
     # directory: recurse

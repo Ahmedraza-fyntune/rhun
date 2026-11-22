@@ -336,6 +336,7 @@ On macOS the title bar is rhun's too, with the window buttons in it. Command wor
 | Ctrl+O | Open file |
 | Ctrl+Shift+O | Open folder |
 | Ctrl+Shift+P, F1 | Command palette |
+| Ctrl+Shift+N | New window |
 | Ctrl+, | Settings |
 | Ctrl+K Ctrl+T | Color theme |
 | Ctrl+B | Toggle explorer |
@@ -691,6 +692,9 @@ tab_width = 4
 [terminal]
 shell = /usr/bin/fish
 font_size = 14
+[files]
+auto_save = after_delay
+auto_save_delay = 1000
 [git]
 enabled = false
 [keys]

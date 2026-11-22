@@ -2208,6 +2208,7 @@ g_commands:
     COMMAND keyboard_shortcuts, "Keyboard Shortcuts", cmd_keyboard_shortcuts, ""
     COMMAND select_file_icon_theme, "Select File Icon Theme", cmd_select_file_icon_theme, ""
     COMMAND new_file, "New File", cmd_new_file, "ctrl+n"
+    COMMAND new_window, "New Window", cmd_new_window, "ctrl+shift+n"
     COMMAND save, "Save", cmd_save, "ctrl+s"
     COMMAND save_without_formatting, "Save Without Formatting", cmd_save_without_formatting, ""
     COMMAND cancel_save, "Cancel Save", cmd_cancel_save, ""
@@ -2464,5 +2465,6 @@ g_commands:
     COMMAND fold_level_1, "Fold Level 1", cmd_fold_level_1, ""
     COMMAND fold_level_2, "Fold Level 2", cmd_fold_level_2, ""
     COMMAND fold_level_3, "Fold Level 3", cmd_fold_level_3, ""
+    COMMAND codebase_insights, "Codebase Insights: Show Project Statistics", cmd_codebase_insights, ""
     .quad 0, 0, 0, 0
 
